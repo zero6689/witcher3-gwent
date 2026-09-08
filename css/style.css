@@ -932,3 +932,54 @@ button.primary {
 
 /* 手牌区允许横向滚动（牌多时不挤成一条） */
 .player-hand { overflow-x: auto; overflow-y: visible; padding-bottom: 6px; }
+
+/* ============================================================
+ *  手机端适配（≤ 640px）
+ * ============================================================ */
+@media (max-width: 640px) {
+  .app { padding: 4px 5px 6px; gap: 3px; }
+  .topbar { flex-wrap: wrap; gap: 4px; padding: 4px 7px; }
+  .brand { font-size: 15px; letter-spacing: 1px; }
+  .brand .sub { display: none; }
+  .scoreboard { margin-left: 0; }
+  .weatherbar { margin-left: auto; }
+  .wtoken { width: 26px; height: 26px; font-size: 13px; }
+
+  .side-panel { flex: 0 0 74px; padding: 4px 3px; gap: 3px; }
+  .sp-crest { width: 28px; height: 31px; }
+  .sp-name { font-size: 9px; letter-spacing: 0; }
+  .sp-leader-art { width: 32px; height: 32px; }
+  .sp-leader-name { font-size: 8px; }
+  .sp-score { width: 34px; height: 34px; font-size: 16px; }
+  .sp-stats { font-size: 8px; }
+  .sp-hand { display: none; }
+  .side-pile { display: none; }
+
+  .rowside { flex: 0 0 28px; padding-right: 2px; }
+  .row .rowlabel { font-size: 8px; letter-spacing: 0; }
+  .row .rowscore { font-size: 12px; }
+  .row { min-height: calc(var(--cardw) * 1.375 + 8px); padding: 2px 3px; }
+
+  .hand { min-height: 66px; gap: 4px; }
+  .midline { flex: 0 0 32px; padding: 0 6px; gap: 8px; }
+  .turn-banner { font-size: 12px; letter-spacing: 0; }
+
+  .controls { flex-direction: column; align-items: stretch; gap: 4px; padding: 3px; }
+  .action-buttons { justify-content: center; }
+  button { padding: 7px 12px; font-size: 13px; }
+  .log { max-height: 46px; font-size: 11px; }
+
+  .modal { padding: 12px; gap: 9px; }
+  .modal h2 { font-size: 19px; letter-spacing: 2px; }
+  .faction-choice { gap: 8px; }
+  .faction-choice .fc { min-width: 108px; padding: 10px 6px; }
+  .crest-wrap { width: 58px; height: 64px; margin-bottom: 6px; }
+  .faction-choice .fc-name { font-size: 13px; }
+  .faction-choice .fc-en { display: none; }
+  .diff-card { width: 132px; padding: 9px; }
+  .deck-grid { grid-template-columns: repeat(auto-fill, minmax(62px, 1fr)); }
+  .pool-grid { grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); max-height: 40vh; }
+  .pool-card .card { height: 84px; }
+  .leader-chip { width: 132px; }
+  .lc-art { height: 74px; }
+}
