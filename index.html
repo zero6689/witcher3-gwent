@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>昆特牌 · 巫师3 网页版</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app" class="app">
+    <!-- 顶栏：标题/回合信息/天气状态 -->
+    <header id="topbar" class="topbar">
+      <div class="brand">昆特牌 <span class="sub">Gwent · The Witcher 3 网页版</span></div>
+      <div id="scoreboard" class="scoreboard"></div>
+      <div id="weatherbar" class="weatherbar"></div>
+    </header>
+
+    <!-- 中央牌桌 -->
+    <main id="table" class="table">
+      <!-- 对手区 -->
+      <section class="zone enemy-zone">
+        <div id="enemySide" class="side-panel"></div>
+        <div class="rows-col">
+          <div id="enemyRows" class="rows"></div>
+        </div>
+        <div id="enemyDiscard" class="pile side-pile" title="对手牌组/坟场"></div>
+      </section>
+
+      <!-- 中线：天气牌槽 -->
+      <div id="midline" class="midline">
+        <div id="weatherSlot" class="weather-slot"></div>
+        <div id="turnBanner" class="turn-banner"></div>
+      </div>
+
+      <!-- 己方区 -->
+      <section class="zone player-zone">
+        <div id="playerSide" class="side-panel"></div>
+        <div class="rows-col">
+          <div id="playerRows" class="rows"></div>
+          <div id="playerHand" class="hand player-hand"></div>
+        </div>
+        <div id="playerDiscard" class="pile side-pile" title="牌组/坟场"></div>
+      </section>
+    </main>
+
+    <!-- 底部操作栏 -->
+    <footer id="controls" class="controls">
+      <div id="actionButtons" class="action-buttons"></div>
+      <div id="log" class="log"></div>
+    </footer>
+
+    <!-- 选牌/开局遮罩 -->
+    <div id="overlay" class="overlay hidden"></div>
+    <div id="toast" class="toast hidden"></div>
+  </div>
+
+  <script src="js/art.js"></script>
+  <script src="js/emblems.js"></script>
+  <script src="js/data.js"></script>
+  <script src="js/engine.js"></script>
+  <script src="js/ai.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/deckbuilder.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

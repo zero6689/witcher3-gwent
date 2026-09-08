@@ -1,0 +1,198 @@
+# 昆特牌 · 巫师3 网页版（Gwent · TW3）
+
+用 HTML/CSS/原生 JS 复刻的《巫师3：狂猎》内置小游戏**昆特牌**（经典三排版）：
+完整核心规则 + 官方卡面 + **卡组编辑器** + **四档难度** + **音效与出牌动画** + 局域网/云服务器。
+
+## 快速开始
+
+**方式一：直接打开**
+
+双击 `index.html`（无需构建、无需服务器）。
+
+**方式二：本地 / 局域网服务器（推荐，多人试玩）**
+
+```powershell
+node server.js            # 默认 0.0.0.0:8080
+node server.js 3000       # 指定端口
+npm start                 # 同上
+```
+
+启动后终端会打印可直接访问的地址，例如：
+
+```
+本机：    http://localhost:8080/
+局域网：  http://192.168.3.6:8080/    (WLAN)
+          http://100.77.210.4:8080/   (Tailscale)
+```
+
+同一 WiFi 下的手机、平板、其他电脑直接打开局域网地址即可对局（各自独立与 AI 对战）。
+若被 Windows 防火墙拦截，用管理员 PowerShell 放行一次：
+
+```powershell
+New-NetFirewallRule -DisplayName "Gwent 8080" -Direction Inbound -Protocol TCP -LocalPort 8080 -Action Allow
+```
+
+> **卡图已全部本地化**（`assets/cards/`，143 张 webp，12 MB），不依赖任何外部 CDN，**断网 / 局域网 / 手机都能正常显示**。
+> 如需重新下载或补图：`node scripts/fetch-art.js`。
+
+## 画风
+
+界面按《巫师3》内置昆特牌的质感重做：
+
+- 深色胡桃木牌桌 + 暖色晕影 + 缓慢上浮的余烬粒子
+- 做旧金铜渐变边框、卡牌内斜面压印、铜质战力圆章
+- 羊皮纸色衬线字（Palatino/Georgia 回退栈）配金色描边标题
+- **官方阵营盾徽**（`assets/emblems/*.png`）：北方领域青盾金狮、尼弗迦德烈日、松鼠党绿盾银箭、怪物红盾利爪（另附斯凯利格紫盾备用）；加载失败自动回退到手绘 SVG
+- **领袖选项显示人物头像**（领袖卡面裁切到头像区），卡池与手牌均为官方卡面
+- 天气令牌与胜负圆章为浮雕铜章；号角排呼吸光晕
+
+## 怎么玩
+
+**点一下手牌就打出去了** —— 不用先选牌再点排：单位会自动落到它该在的排（近战/远程/攻城），
+敏捷牌自动选最有利的排，间谍自动打到对方场上，天气/天晴/焚风点了立刻生效，号角自动放到收益最大的排。
+只有「诱饵」需要你点一下要收回的单位。
+
+**牌桌上的牌和手牌一样大**（64×88），多张时层叠错开陈列，鼠标悬停会弹出放大；牌特别多时自动缩小以全部可见。
+
+## 功能
+
+### 卡组编辑器
+- 阵营 → 难度 → **卡组编辑**：从该阵营卡池 + 中立卡中自选。
+- 规则与原版一致：**单位牌 22–40 张**、**特殊牌 ≤10 张**、同名卡不超过持有张数。
+- 4 位领袖任选其一；实时显示单位/特殊/总数与校验错误，非法时无法开战。
+- 「一键填充」按价值优先级自动配好一套合法牌组；左键加牌、右键（或 Shift+左键）减牌。
+- 牌组按阵营保存在浏览器 `localStorage`，下次自动载入。
+
+### 难度分级
+
+| 难度 | AI 强度 | 特点 |
+|---|---|---|
+| 简单 | 0.15 | 牌组更弱（只带 24 张最弱单位）、频繁失误、会无理由过牌 |
+| 普通 | 0.5 | 按战力出牌，偶有失误 |
+| 困难 | 0.8 | 算牌差、保关键牌、精准过牌、会用领袖技 |
+| 大师 | 1.0 | 零失误、完整过牌判断、间谍/医生/召唤连锁、天气压制 |
+
+实测（同一套固定玩家策略，每档 96 局，固定随机种子）：
+
+```
+简单 74%   普通 43%   困难 43%   大师 35%     ← 玩家胜率
+```
+
+### 音效与动画
+- **音效全部实时合成**（Web Audio API），不依赖任何音频文件：出牌、落桌、间谍、医生、召唤、天气、天晴、号角、焚风、诱饵、过牌、局胜/局负、整局胜负。右下角按钮可随时静音。
+- **出牌动画**：卡牌从手牌旋转落下；新抽牌滑入；号角排呼吸光晕；焚风/局末全屏闪光。
+- **天气特效**：冰霜结霜流动、浓雾横向漂移、大雨斜向下落。
+- **分数滚动**：总分变化时数字滚动计数。
+
+### 规则实现（完整核心规则）
+
+- **三局两胜**；每局双方轮流出牌或「过」，双方都过后比总战力。
+- **三排**：近战 / 远程 / 攻城。
+- **天气**：冰霜（近战）、浓雾（远程）、暴雨（攻城）→ 对应排非英雄单位降为 1；天晴清除全部。
+- **号角**：指挥官号角使己方某排非英雄单位 ×2；丹德里恩自带号角能力。
+- **英雄**：免疫天气 / 号角 / 焚风 / 诱饵 / 医生复活。
+- **技能**：间谍（放对方场上、你抽 2）、医生（坟场复活，玩家可选目标）、同袍、召唤（同组卡自动上场）、鼓舞、焚风（全场 >10 时摧毁最强非英雄）。
+- **领袖技**：每阵营 4 位，每局一次，含放晴、排翻倍、牌组取天气、摧毁敌方整排、封锁对手领袖、窥视手牌、弃 2 抽 1、坟场取牌等。
+- **换牌**：开局换 2 张；第 2、3 局开始前补抽至 10 张。
+
+## 卡池
+
+基础游戏 **143 种卡**（4 阵营 + 中立 + 特殊牌），数据经两套独立来源交叉核对：
+
+| 来源 | 用途 |
+|---|---|
+| [asundr/gwent-classic](https://github.com/asundr/gwent-classic) | 战力/排位/技能/张数（引擎级数据） |
+| [gwentcards.github.io](https://github.com/gwentcards/gwentcards.github.io) | 卡池集合与实体张数（全收集清单） |
+| [gosunoob 卡表](https://www.gosunoob.com/witcher-3/witcher-3-gwent-cards-list/) | 领袖文字/行位 tiebreak |
+
+已排除：独立版《巫师之昆特牌》数据（体系不同，不可混用）、Skellige 牌组、石之心/血与酒新增卡。
+
+## 目录结构
+
+```
+index.html            页面骨架
+server.js             零依赖静态服务器（局域网/云服务器）
+package.json          npm 脚本
+css/style.css         牌桌 / 卡牌 / 卡组编辑器 / 动画 / 天气特效（含巫师3 风格覆盖层）
+assets/cards/         143 张卡面（本地 webp）
+assets/emblems/       阵营盾徽（官方图，本地 png）
+js/art.js             卡牌 → 本地卡面路径映射
+js/emblems.js         盾徽图片 + SVG 兜底
+js/data.js            阵营、领袖、卡池、组牌规则、难度定义
+js/engine.js          规则引擎（纯逻辑，含事件队列）
+js/ai.js              四档难度 AI
+js/audio.js           Web Audio 合成音效
+js/deckbuilder.js     卡组编辑器
+js/ui.js              DOM 渲染、动画、分数滚动
+js/main.js            开局流程（阵营 → 难度 → 组牌 → 换牌 → 开战）
+scripts/build-art.js  由卡图清单生成映射
+scripts/fetch-art.js  下载卡面到本地
+test/                 测试套件
+```
+
+## 测试
+
+```powershell
+npm test                    # 全部四套
+node test/static-check.js   # 脚本加载顺序/全局声明冲突/DOM id/跨文件符号
+node test/headless-test.js  # 4 阵营两两对阵 12 组，自动打完整局
+node test/ui-smoke.js       # 自建 DOM 垫片，跑真实 UI 流程（含卡组编辑器）
+node test/auto-play-test.js  # 「点卡自动上场」行为（单位/敏捷/间谍/天气/号角）
+node test/difficulty-test.js# 四档难度胜率曲线（固定种子，可复现）
+```
+
+- `ui-smoke.js`：11 项断言，覆盖弹窗、难度选择、卡组编辑器校验、换牌、牌桌渲染、卡面挂载、音效触发、整局无异常。
+- `test/dom-shim.js`：约 220 行极简 DOM 垫片（本机 npm 写入被沙箱拒绝，装不了 jsdom）。
+
+## 部署到云服务器
+
+游戏是纯静态文件，任何静态托管都可以。用自带服务器最省事：
+
+```bash
+# 1. 上传项目（任选其一）
+scp -r gwent-web user@your-server:/opt/gwent-web
+# 或 git clone <你的仓库>
+
+# 2. 直接跑（前台）
+cd /opt/gwent-web && node server.js 8080
+
+# 3. 常驻：systemd
+sudo tee /etc/systemd/system/gwent.service > /dev/null <<'EOF'
+[Unit]
+Description=Gwent Web
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/gwent-web
+ExecStart=/usr/bin/node server.js 8080
+Restart=always
+User=www-data
+
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo systemctl daemon-reload && sudo systemctl enable --now gwent
+```
+
+再放行云厂商**安全组**与系统防火墙的 8080 端口即可访问 `http://公网IP:8080/`。
+想用 80 端口 + 域名，前面套一层 Nginx：
+
+```nginx
+server {
+    listen 80;
+    server_name gwent.example.com;
+    root /opt/gwent-web;
+    index index.html;
+    location / { try_files $uri $uri/ /index.html; }
+}
+```
+
+> 公网暴露注意：本项目没有账号系统，任何拿到地址的人都能玩；如需限制可加 Nginx Basic Auth 或仅绑内网 IP（`node server.js --host 127.0.0.1 8080`）。
+
+## 已知限制
+
+- 没有卡牌收集/解锁系统：编辑器里可用的是该阵营的全部卡池（等同于"全收集"）。
+- 领袖技「弃 2 抽 1」自动弃掉战力最低的 2 张，不提供手动选择。
+- 部分中文译名按社区通行译法，个别专有名词可能与官方简中略有出入。
+- 卡图版权归 CD Projekt RED / 原作者所有，仅作学习用途（已下载到本地 `assets/cards/`）。
