@@ -933,9 +933,24 @@ button.primary {
 /* 手牌区允许横向滚动（牌多时不挤成一条） */
 .player-hand { overflow-x: auto; overflow-y: visible; padding-bottom: 6px; }
 
+/* 版权声明（页脚小字） */
+.legal {
+  flex: 0 0 auto;
+  text-align: center;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: rgba(160,143,110,.72);
+  letter-spacing: .3px;
+  padding: 2px 8px 4px;
+  user-select: none;
+}
+
 /* ============================================================
  *  手机端适配（≤ 640px）
  * ============================================================ */
+/* 允许纵向滚动（原基础样式 body{overflow:hidden} 会把底部手牌裁掉） */
+body { overflow-y: auto; overflow-x: hidden; }
+
 @media (max-width: 640px) {
   .app { padding: 4px 5px 6px; gap: 3px; }
   .topbar { flex-wrap: wrap; gap: 4px; padding: 4px 7px; }
@@ -982,4 +997,75 @@ button.primary {
   .pool-card .card { height: 84px; }
   .leader-chip { width: 132px; }
   .lc-art { height: 74px; }
+}
+
+/* ============================================================
+ *  横屏手机 / 矮屏：整体压缩 + 手牌吸底，保证自己的牌始终可见
+ * ============================================================ */
+@media (orientation: landscape) and (max-height: 600px), (max-height: 480px) {
+  .app { padding: 2px 4px 3px; gap: 2px; }
+  .topbar { padding: 2px 6px; gap: 6px; }
+  .brand { font-size: 13px; letter-spacing: 1px; }
+  .brand .sub { display: none; }
+  .win-pip { width: 20px; height: 20px; font-size: 11px; }
+  .wtoken { width: 22px; height: 22px; font-size: 12px; }
+
+  /* 三排压缩到极限，但牌仍然看得清 */
+  .zone { padding: 2px 3px; gap: 4px; }
+  .rows { gap: 2px; }
+  .row { --cardw: 34px; min-height: calc(var(--cardw) * 1.375 + 4px); padding: 1px 2px; gap: 3px; }
+  .rowside { flex: 0 0 24px; }
+  .row .rowlabel { font-size: 7px; }
+  .row .rowscore { font-size: 11px; }
+  .row .card .name { font-size: 6px; }
+  .row .card .power { width: 13px; height: 13px; font-size: 9px; }
+
+  /* 侧栏瘦身 */
+  .side-panel { flex: 0 0 56px; padding: 2px; gap: 2px; }
+  .sp-crest { width: 22px; height: 24px; }
+  .sp-name { font-size: 8px; }
+  .sp-leader-art { width: 26px; height: 26px; }
+  .sp-leader-name, .sp-stats { font-size: 7px; }
+  .sp-score { width: 26px; height: 26px; font-size: 13px; }
+  .sp-hand, .side-pile { display: none; }
+
+  /* 手牌：吸底常驻，永远看得见 */
+  .hand {
+    position: sticky; bottom: 0; z-index: 60;
+    min-height: 50px; gap: 4px; padding: 3px 4px 2px;
+    background: linear-gradient(0deg, rgba(8,6,3,.97), rgba(8,6,3,.85) 70%, transparent);
+    backdrop-filter: blur(2px);
+  }
+  .hand .card { width: 38px; height: 52px; }
+  .hand .card .name { font-size: 6.5px; }
+  .hand .card .power { width: 13px; height: 13px; font-size: 9px; }
+
+  .midline { flex: 0 0 22px; padding: 0 4px; gap: 6px; }
+  .turn-banner { font-size: 11px; letter-spacing: 0; }
+
+  .controls { flex-direction: row; align-items: center; gap: 6px; padding: 2px 3px; }
+  .action-buttons { flex-wrap: nowrap; gap: 5px; }
+  button { padding: 5px 9px; font-size: 11px; }
+  .log { display: none; }
+  .legal { display: none; }
+
+  .modal { max-height: 96vh; padding: 8px 10px; gap: 6px; }
+  .modal h2 { font-size: 16px; letter-spacing: 1px; }
+  .hint, .entry-foot { font-size: 11px; }
+  .crest-wrap { width: 46px; height: 52px; margin-bottom: 4px; }
+  .faction-choice .fc { min-width: 96px; padding: 7px 5px; }
+  .faction-choice .fc-name { font-size: 12px; }
+  .faction-choice .fc-tag, .faction-choice .fc-en { display: none; }
+  .diff-choice { gap: 6px; }
+  .diff-card { width: 118px; padding: 6px; }
+  .diff-name { font-size: 13px; }
+  .diff-desc { font-size: 9.5px; min-height: 34px; }
+  .deck-leaders { gap: 5px; }
+  .leader-chip { width: 112px; }
+  .lc-art { height: 56px; }
+  .lc-name { font-size: 10.5px; padding: 4px 6px 0; }
+  .lc-desc { font-size: 9px; padding: 2px 6px 5px; }
+  .pool-grid { max-height: 34vh; grid-template-columns: repeat(auto-fill, minmax(56px, 1fr)); }
+  .pool-card .card { height: 74px; }
+  .deck-grid { grid-template-columns: repeat(auto-fill, minmax(54px, 1fr)); }
 }
