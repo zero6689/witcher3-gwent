@@ -1,6 +1,6 @@
 {
   "name": "gwent-android",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "昆特牌 · 巫师3 网页版 —— Android 打包（Capacitor）",
   "scripts": {
@@ -19,3 +19,4 @@
     "@capacitor/cli": "^6.2.0"
   }
 }
+

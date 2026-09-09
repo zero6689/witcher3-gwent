@@ -68,6 +68,19 @@ if (Test-Path $wrap) {
   Say 'Gradle 下载地址已切换到腾讯镜像'
 }
 
+# ---------- 4.5 版本号跟随根 package.json ----------
+$ver = (Get-Content (Join-Path $repo 'package.json') -Raw | ConvertFrom-Json).version
+$gradleFile = Join-Path $androidDir 'app\build.gradle'
+if ((Test-Path $gradleFile) -and $ver) {
+  $code = [int]((($ver -split '\.') | ForEach-Object { $_.PadLeft(2, '0') }) -join '')
+  if ($code -lt 1) { $code = 1 }
+  $g = Get-Content $gradleFile -Raw
+  $g = $g -replace 'versionCode \d+', "versionCode $code"
+  $g = $g -replace 'versionName ".*?"', "versionName `"$ver`""
+  Set-Content -Path $gradleFile -Value $g -Encoding ASCII
+  Say "Android 版本：versionCode=$code  versionName=$ver"
+}
+
 # ---------- 5. 图标与启动图 ----------
 Say '生成 Android 图标与启动图（自带生成器，不依赖 sharp）'
 & $nodeExe (Join-Path $PSScriptRoot 'make-icons.js') | Out-Null
