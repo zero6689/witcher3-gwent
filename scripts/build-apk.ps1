@@ -82,9 +82,15 @@ if ((Test-Path $gradleFile) -and $ver) {
 }
 
 # ---------- 5. 图标与启动图 ----------
-Say '生成 Android 图标与启动图（自带生成器，不依赖 sharp）'
-& $nodeExe (Join-Path $PSScriptRoot 'make-icons.js') | Out-Null
-& $nodeExe (Join-Path $PSScriptRoot 'make-android-icons.js')
+$iconSrc = Join-Path $repo 'assets\icon-src\witcher3.png'
+if (Test-Path $iconSrc) {
+  Say '生成图标：使用自定义图片 assets\icon-src\witcher3.png'
+  & $nodeExe (Join-Path $PSScriptRoot 'make-icons-from-image.js')
+} else {
+  Say '生成图标：使用内置狼首图案'
+  & $nodeExe (Join-Path $PSScriptRoot 'make-icons.js') | Out-Null
+  & $nodeExe (Join-Path $PSScriptRoot 'make-android-icons.js')
+}
 
 # ---------- 6. 同步网页资源 ----------
 if (-not $SkipSync) {
