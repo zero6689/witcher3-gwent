@@ -54,6 +54,7 @@ const UI = evalIn('UI');
 const ROWS = evalIn('ROWS');
 const makeCard = evalIn('makeCard');
 const ALL_CARDS = evalIn('ALL_CARDS');
+UI.showcaseMs = 0;          // 测试环境关掉出牌展示延时
 
 /** 注入指定卡牌到手牌，保证每种情况都被覆盖 */
 function inject(defId) {
@@ -151,7 +152,23 @@ function handEl(i) {
     if (horned.length === 1) ok(`号角自动放到 ${horned[0]} 排`); else bad(`号角未自动落位（horned=${horned.length}）`);
   }
 
-  /* ---- 6. 全程无需点击任何排 ---- */
+  /* ---- 6. 出牌展示：点击后先在中央停留，随后才落位 ---- */
+  await ensurePlayerTurn();
+  {
+    UI.showcaseMs = 700;
+    const card = inject('northern_blue_stripes_commando');
+    clickUid(card.uid);
+    const onBoardNow = ROWS.some(r => g.side.player.rows[r].some(c => c.uid === card.uid && !c.tomb));
+    const showcaseOn = doc.querySelectorAll('.card-showcase.show').length > 0;
+    if (showcaseOn) ok('点击后中央展示层出现 ✅'); else bad('中央展示层未出现');
+    if (!onBoardNow) ok('展示期间牌未立即落位 ✅'); else bad('展示期间就已落位（展示未生效）');
+    await new Promise(r => setTimeout(r, 1400));
+    const onBoardLater = ROWS.some(r => g.side.player.rows[r].some(c => c.uid === card.uid && !c.tomb));
+    if (onBoardLater) ok('展示结束后自动落到牌桌 ✅'); else bad('展示结束后未落位');
+    UI.showcaseMs = 0;
+  }
+
+  /* ---- 7. 全程无需点击任何排 ---- */
   ok('以上全部通过点击手牌完成，未调用任何选排交互');
 
   console.log(fail ? `\n${fail} 项未通过` : '\n全部通过');

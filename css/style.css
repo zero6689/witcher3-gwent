@@ -900,13 +900,15 @@ button.primary {
 .row .card .tag { font-size: 10px; }
 
 @media (max-width: 900px) {
-  .hand .card { width: 52px; height: 72px; }
-  .hand { min-height: 80px; }
-  .row .rowcards { --cardw: 52px; }
+  .hand .card { width: 60px; height: 82px; }
+  .hand { min-height: 92px; }
+  .row .rowcards { --cardw: 56px; }
 }
 @media (max-width: 640px) {
-  .hand .card { width: 44px; height: 62px; }
-  .row .rowcards { --cardw: 44px; }
+  .hand .card { width: 58px; height: 80px; }
+  .hand { min-height: 90px; gap: 6px; }
+  .row .rowcards { --cardw: 50px; }
+  .row { --cardw: 50px; }
 }
 
 /* ============================================================
@@ -927,8 +929,8 @@ button.primary {
 .row .card { width: var(--cardw); height: calc(var(--cardw) * 1.375); }
 .row .card:hover { z-index: 999 !important; }
 
-@media (max-width: 900px) { .row { --cardw: 52px; } }
-@media (max-width: 640px) { .row { --cardw: 44px; } }
+@media (max-width: 900px) { .row { --cardw: 56px; } }
+@media (max-width: 640px) { .row { --cardw: 50px; } }
 
 /* 手牌区允许横向滚动（牌多时不挤成一条） */
 .player-hand { overflow-x: auto; overflow-y: visible; padding-bottom: 6px; }
@@ -1076,6 +1078,41 @@ button.primary {
 }
 
 /* ============================================================
+ *  出牌中央展示（放大停留后再飞到牌桌）
+ * ============================================================ */
+.card-showcase {
+  position: fixed; inset: 0; z-index: 92;
+  display: none; align-items: center; justify-content: center;
+  pointer-events: none;
+  background: radial-gradient(circle at 50% 45%, rgba(0,0,0,.62), rgba(0,0,0,.28) 60%, rgba(0,0,0,.1));
+}
+.card-showcase.show { display: flex; }
+.card-showcase .cs-card {
+  width: var(--cs-w, 210px);
+  height: calc(var(--cs-w, 210px) * 1.375);
+  animation: csIn .26s cubic-bezier(.2,.8,.25,1);
+  box-shadow: 0 22px 60px rgba(0,0,0,.9), 0 0 40px rgba(240,217,160,.45);
+}
+@keyframes csIn {
+  from { transform: scale(.55) translateY(30px); opacity: 0; }
+  60%  { transform: scale(1.04) translateY(0); opacity: 1; }
+  to   { transform: scale(1); opacity: 1; }
+}
+.card-showcase .cs-card .name { font-size: clamp(11px, calc(var(--cs-w, 210px) * .085), 18px); padding: 6px 4px 4px; }
+.card-showcase .cs-card .power { width: 34px; height: 34px; font-size: 20px; top: 5px; left: 14px; }
+.card-showcase .cs-card .tag { width: 34px; height: 34px; font-size: 18px; top: 5px; left: 14px; }
+.card-showcase .cs-card .abilities { top: 46px; left: 14px; gap: 4px; }
+.card-showcase .cs-card .cbadge { width: 24px; height: 24px; font-size: 13px; }
+.card-showcase .cs-card .faction-bar { width: 10px; }
+
+@media (max-width: 640px) {
+  .card-showcase .cs-card { --cs-w: 172px; }
+}
+@media (orientation: landscape) and (max-height: 600px), (max-height: 480px) {
+  .card-showcase .cs-card { --cs-w: 148px; }
+}
+
+/* ============================================================
  *  回合开始横幅（你先手 / 对手先手）
  * ============================================================ */
 .turn-overlay {
@@ -1170,14 +1207,16 @@ button.primary {
   .ruby { width: 9px; height: 9px; }
 }
 @media (max-width: 640px) {
-  .side-panel { flex: 0 0 76px; gap: 2px; }
-  .sp-avatar { width: 38px; height: 38px; padding: 2px; }
-  .laurel { width: 46px; height: 46px; }
-  .laurel-num { font-size: 17px; }
-  .sp-crest { width: 20px; height: 22px; }
-  .sp-name { font-size: 9px; }
-  .sp-leader-name { font-size: 8px; }
-  .sp-stats { font-size: 8px; }
+  .side-panel { flex: 0 0 68px; gap: 2px; padding: 4px 2px; }
+  .sp-avatar { width: 36px; height: 36px; padding: 2px; }
+  .laurel { width: 42px; height: 42px; }
+  .laurel-num { font-size: 16px; }
+  .sp-crest { width: 18px; height: 20px; }
+  .sp-name { font-size: 8.5px; }
+  .sp-leader-name { font-size: 7.5px; }
+  .sp-stats { font-size: 7.5px; }
+  .sp-coin { font-size: 9px; }
+  .ruby { width: 8px; height: 8px; }
 }
 @media (orientation: landscape) and (max-height: 600px), (max-height: 480px) {
   .side-panel { flex: 0 0 62px; gap: 1px; }
@@ -1566,12 +1605,12 @@ body { overflow-y: auto; overflow-x: hidden; }
   /* 三排压缩到极限，但牌仍然看得清 */
   .zone { padding: 2px 3px; gap: 4px; }
   .rows { gap: 2px; }
-  .row { --cardw: 34px; min-height: calc(var(--cardw) * 1.375 + 4px); padding: 1px 2px; gap: 3px; }
-  .rowside { flex: 0 0 24px; }
-  .row .rowlabel { font-size: 7px; }
-  .row .rowscore { font-size: 11px; }
-  .row .card .name { font-size: 6px; }
-  .row .card .power { width: 13px; height: 13px; font-size: 9px; }
+  .row { --cardw: 40px; min-height: calc(var(--cardw) * 1.375 + 4px); padding: 1px 2px; gap: 3px; }
+  .rowside { flex: 0 0 26px; }
+  .row .rowlabel { font-size: 7.5px; }
+  .row .rowscore { font-size: 12px; }
+  .row .card .name { font-size: 7px; }
+  .row .card .power { width: 14px; height: 14px; font-size: 10px; }
 
   /* 侧栏瘦身 */
   .side-panel { flex: 0 0 56px; padding: 2px; gap: 2px; }
@@ -1585,13 +1624,13 @@ body { overflow-y: auto; overflow-x: hidden; }
   /* 手牌：吸底常驻，永远看得见 */
   .hand {
     position: sticky; bottom: 0; z-index: 60;
-    min-height: 50px; gap: 4px; padding: 3px 4px 2px;
+    min-height: 58px; gap: 5px; padding: 3px 4px 2px;
     background: linear-gradient(0deg, rgba(8,6,3,.97), rgba(8,6,3,.85) 70%, transparent);
     backdrop-filter: blur(2px);
   }
-  .hand .card { width: 38px; height: 52px; }
-  .hand .card .name { font-size: 6.5px; }
-  .hand .card .power { width: 13px; height: 13px; font-size: 9px; }
+  .hand .card { width: 46px; height: 63px; }
+  .hand .card .name { font-size: 7px; }
+  .hand .card .power { width: 14px; height: 14px; font-size: 10px; }
 
   .midline { flex: 0 0 22px; padding: 0 4px; gap: 6px; }
   .turn-banner { font-size: 11px; letter-spacing: 0; }

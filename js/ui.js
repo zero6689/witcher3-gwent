@@ -20,6 +20,8 @@ const UI = {
     this._lastRound = 0;
     this._shownResults = false;
     this._flyFrom = null;
+    this._busy = false;
+    this.showcaseMs = 750;      // 出牌前中央展示时长（毫秒）
     this._dispScore = { player: 0, ai: 0 };
     this._scoreAnim = {};
     this.bindStatic();
@@ -592,10 +594,26 @@ const UI = {
     }
   },
 
+  /** 出牌前：中央放大展示，停留 showcaseMs 毫秒后回调 */
+  showcase(card, done) {
+    const ms = this.showcaseMs == null ? 750 : this.showcaseMs;
+    const host = this.el('cardShowcase');
+    if (!host || !ms || typeof document.createElement !== 'function') { done(); return; }
+    const type = card.type || card.t;
+    const cls = 'card cs-card' + (type === 'hero' ? ' hero' : '') + (type === 'special' ? ' special-card' : '');
+    host.innerHTML = `<div class="${cls}">${cardFaceHtml(card)}</div>`;
+    host.classList.add('show');
+    clearTimeout(this._csTimer);
+    this._csTimer = setTimeout(() => {
+      host.classList.remove('show');
+      setTimeout(() => { host.innerHTML = ''; done(); }, 200);
+    }, ms);
+  },
+
   /* ---------------- 交互：点卡即自动上场 ---------------- */
   onHandClick(i) {
     const g = this.g;
-    if (this.targetMode) return;
+    if (this.targetMode || this._busy) return;
     if (!g.isPlayerTurn() || g.passed.player) return;
     const c = g.side.player.hand[i];
     if (!c) return;
@@ -616,18 +634,24 @@ const UI = {
     const srcRect = srcEl && srcEl.getBoundingClientRect ? srcEl.getBoundingClientRect() : null;
     const isSpecial = c.type === 'special';
 
-    const res = g.playCard('player', i, targetRow);
-    if (res.ok) {
-      this.sel = null;
-      if (typeof SFX !== 'undefined') SFX.play('card');
-      if (isSpecial && srcRect) this._flySpecial(c, srcRect);
-      else this.markFlySource(c.uid, srcEl);
-      this.afterAction();
-    } else {
-      this.toast(res.error || '这张牌现在打不出去');
-      this.sel = null;
-      this.render();
-    }
+    // 先中央展示，再真正打出
+    this._busy = true;
+    this.showcase(c, () => {
+      this._busy = false;
+      if (this.g !== g) return;                 // 期间已重开
+      const res = g.playCard('player', i, targetRow);
+      if (res.ok) {
+        this.sel = null;
+        if (typeof SFX !== 'undefined') SFX.play('card');
+        if (isSpecial && srcRect) this._flySpecial(c, srcRect);
+        else this.markFlySource(c.uid, srcEl);
+        this.afterAction();
+      } else {
+        this.toast(res.error || '这张牌现在打不出去');
+        this.sel = null;
+        this.render();
+      }
+    });
   },
 
   /** 单位自动落位：优先不受天气影响、且有同名/号角协同的排 */
