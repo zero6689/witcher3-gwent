@@ -13,7 +13,10 @@
     "test:ui": "node test/ui-smoke.js",
     "test:autoplay": "node test/auto-play-test.js",
     "test:difficulty": "node test/difficulty-test.js",
-    "build:art": "node scripts/build-art.js"
+    "build:art": "node scripts/build-art.js",
+    "build:icons": "node scripts/make-icons.js",
+    "prepare:www": "node scripts/prepare-www.js",
+    "apk:prepare": "node scripts/prepare-www.js && cd android-app && npm install && npx cap add android && npx @capacitor/assets generate --android"
   },
   "engines": {
     "node": ">=18"

@@ -1,0 +1,87 @@
+name: Build Android APK
+
+# 在 GitHub 的服务器上编译 APK（本地无需装 Android SDK）
+# 触发方式：手动运行（Actions 页 → Build Android APK → Run workflow），或推送到 main 时自动构建
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'index.html'
+      - 'css/**'
+      - 'js/**'
+      - 'assets/**'
+      - 'icons/**'
+      - 'manifest.webmanifest'
+      - 'sw.js'
+      - 'scripts/prepare-www.js'
+      - 'android-app/**'
+      - '.github/workflows/android.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 安装 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: 安装 Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: 准备网页资源到 android-app/www
+        run: node scripts/prepare-www.js
+
+      - name: 安装 Capacitor 依赖
+        working-directory: android-app
+        run: npm install --no-audit --no-fund
+
+      - name: 添加 Android 平台
+        working-directory: android-app
+        run: npx cap add android
+
+      - name: 生成应用图标与启动图
+        working-directory: android-app
+        run: npx @capacitor/assets generate --android --iconBackgroundColor "#0b0705" --splashBackgroundColor "#0b0705"
+
+      - name: 同步网页资源
+        working-directory: android-app
+        run: npx cap sync android
+
+      - name: 编译 Debug APK
+        working-directory: android-app/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: 重命名产物
+        run: |
+          cp android-app/android/app/build/outputs/apk/debug/app-debug.apk gwent-android-debug.apk
+          ls -lh gwent-android-debug.apk
+
+      - name: 上传 APK（Actions 构建产物）
+        uses: actions/upload-artifact@v4
+        with:
+          name: gwent-android-apk
+          path: gwent-android-debug.apk
+          retention-days: 30
+
+      - name: 发布到 Release（仅打 tag 时）
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: gwent-android-debug.apk
+          generate_release_notes: true

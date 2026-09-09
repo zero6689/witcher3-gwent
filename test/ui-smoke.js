@@ -31,6 +31,8 @@ const sandbox = Object.assign(Object.create(null), {
   window: win, document: doc, console, Math, JSON, Object, Array, String, Number, Boolean,
   Date, Set, Map, RegExp, Error, TypeError, parseInt, parseFloat, isNaN, Infinity, NaN,
   setTimeout, clearTimeout, Promise, Symbol, localStorage, performance: perf,
+  navigator: { userAgent: 'dom-shim' },
+  location: { protocol: 'http:', href: 'http://localhost/', reload() {} },
   requestAnimationFrame: raf, cancelAnimationFrame: (id) => clearTimeout(id),
 });
 sandbox.globalThis = sandbox;

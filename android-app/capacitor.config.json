@@ -1,0 +1,14 @@
+{
+  "appId": "io.github.zero6689.gwent",
+  "appName": "昆特牌",
+  "webDir": "www",
+  "bundledWebRuntime": false,
+  "android": {
+    "backgroundColor": "#0b0705",
+    "allowMixedContent": false,
+    "webContentsDebuggingEnabled": false
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}

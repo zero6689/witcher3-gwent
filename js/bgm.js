@@ -70,6 +70,10 @@ const BGM = {
         }
       }
     }
+    // 没有真实音频文件 → 用内置合成曲（原创、无版权）
+    if (!found.length) {
+      found.push({ title: '酒馆夜曲', artist: '内置合成 · 原创无版权', procedural: true });
+    }
     this.tracks = found;
     this._probed = true;
   },
@@ -89,13 +93,130 @@ const BGM = {
   /* ---------------- 音频绑定 ---------------- */
   _bindAudio() {
     if (!this.tracks.length) return;
+    const first = this.tracks[0];
+    if (first.procedural) return;          // 合成曲不需要 <audio>
     const a = new Audio();
     a.preload = 'auto';
     a.volume = this.volume;
     a.addEventListener('ended', () => this.next());
     a.addEventListener('error', () => this._skipBroken());
     this.audio = a;
-    a.src = this.tracks[0].src;
+    a.src = first.src;
+  },
+
+  /* ---------------- 内置合成 BGM（原创，无版权） ----------------
+   * D 小调酒馆风：低音持续音 + 鲁特琴琶音 + 框鼓，4 小节循环
+   * ------------------------------------------------------------ */
+  _ensureAudioCtx() {
+    if (this._pctx) return this._pctx;
+    const AC = (typeof window !== 'undefined') && (window.AudioContext || window.webkitAudioContext);
+    if (!AC) return null;
+    try {
+      this._pctx = new AC();
+      this._pmaster = this._pctx.createGain();
+      this._pmaster.gain.value = this.volume * 0.5;
+      this._pmaster.connect(this._pctx.destination);
+    } catch (e) { return null; }
+    return this._pctx;
+  },
+
+  _pluck(t, freq, dur, gain) {
+    const ctx = this._pctx;
+    const osc = ctx.createOscillator(), g = ctx.createGain(), f = ctx.createBiquadFilter();
+    osc.type = 'triangle';
+    osc.frequency.value = freq;
+    f.type = 'lowpass';
+    f.frequency.value = 2600;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(gain, t + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.connect(f); f.connect(g); g.connect(this._pmaster);
+    osc.start(t); osc.stop(t + dur + 0.05);
+  },
+
+  _drone(t, freq, dur, gain) {
+    const ctx = this._pctx;
+    const osc = ctx.createOscillator(), g = ctx.createGain(), f = ctx.createBiquadFilter();
+    osc.type = 'sawtooth';
+    osc.frequency.value = freq;
+    f.type = 'lowpass';
+    f.frequency.value = 380;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(gain, t + 0.7);
+    g.gain.setValueAtTime(gain, t + dur - 0.6);
+    g.gain.linearRampToValueAtTime(0.0001, t + dur);
+    osc.connect(f); f.connect(g); g.connect(this._pmaster);
+    osc.start(t); osc.stop(t + dur + 0.05);
+  },
+
+  _drum(t, gain) {
+    const ctx = this._pctx;
+    const dur = 0.18;
+    const buf = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * dur), ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
+    const src = ctx.createBufferSource(); src.buffer = buf;
+    const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 300;
+    const g = ctx.createGain(); g.gain.value = gain;
+    src.connect(f); f.connect(g); g.connect(this._pmaster);
+    src.start(t);
+  },
+
+  _scheduleProcedural() {
+    const ctx = this._pctx;
+    if (!ctx) return;
+    const CHORDS = [
+      { root: 146.83, notes: [293.66, 349.23, 440.00, 349.23] },   // Dm
+      { root: 116.54, notes: [233.08, 293.66, 349.23, 293.66] },   // Bb
+      { root: 174.61, notes: [349.23, 440.00, 523.25, 440.00] },   // F
+      { root: 130.81, notes: [261.63, 329.63, 392.00, 329.63] },   // C
+    ];
+    const beatDur = 0.5;
+    while (this._pnext < ctx.currentTime + 0.7) {
+      const bar = Math.floor(this._pstep / 4) % CHORDS.length;
+      const beat = this._pstep % 4;
+      const ch = CHORDS[bar];
+      const t = this._pnext;
+      if (beat === 0) { this._drone(t, ch.root, beatDur * 4, 0.045); this._drum(t, 0.14); }
+      if (beat === 2) this._drum(t, 0.10);
+      this._pluck(t, ch.notes[beat], 1.2, 0.085);
+      if (beat % 2 === 1) this._pluck(t + beatDur / 2, ch.notes[beat] * 2, 0.5, 0.03);
+      this._pnext += beatDur;
+      this._pstep++;
+    }
+  },
+
+  _startProcedural() {
+    const ctx = this._ensureAudioCtx();
+    if (!ctx) return;
+    if (ctx.state === 'suspended') ctx.resume();
+    this._pmaster.gain.cancelScheduledValues(ctx.currentTime);
+    this._pmaster.gain.setValueAtTime(this.volume * 0.5, ctx.currentTime);
+    this._pnext = ctx.currentTime + 0.08;
+    this._pstep = 0;
+    clearInterval(this._ptimer);
+    this._ptimer = setInterval(() => this._scheduleProcedural(), 120);
+    this._scheduleProcedural();
+    this.started = true;
+    this._render();
+  },
+
+  _stopProcedural() {
+    clearInterval(this._ptimer);
+    this._ptimer = null;
+    if (this._pmaster && this._pctx) {
+      const t = this._pctx.currentTime;
+      this._pmaster.gain.cancelScheduledValues(t);
+      this._pmaster.gain.setValueAtTime(this._pmaster.gain.value, t);
+      this._pmaster.gain.linearRampToValueAtTime(0.0001, t + 0.35);
+    }
+    this.started = false;
+    this._render();
+  },
+
+  _isProcedural() {
+    const t = this.current();
+    return !!(t && t.procedural);
   },
 
   _skipBroken() {
@@ -110,7 +231,9 @@ const BGM = {
 
   /* ---------------- 播放控制 ---------------- */
   play() {
-    if (!this.audio || !this.enabled || !this.tracks.length) { this._render(); return; }
+    if (!this.enabled || !this.tracks.length) { this._render(); return; }
+    if (this._isProcedural()) { this._startProcedural(); return; }
+    if (!this.audio) { this._render(); return; }
     this.audio.volume = this.volume;
     const p = this.audio.play();
     if (p && p.catch) {
@@ -121,6 +244,7 @@ const BGM = {
   },
 
   pause() {
+    if (this._isProcedural()) { this._stopProcedural(); return; }
     if (this.audio) this.audio.pause();
     this.started = false;
     this._render();
@@ -136,6 +260,7 @@ const BGM = {
 
   next() {
     if (!this.tracks.length) return;
+    if (this._isProcedural()) { this._startProcedural(); return; }
     const alive = this.tracks.filter(t => !t.broken);
     if (alive.length <= 1) { this.play(); return; }
     let guard = 0;
@@ -148,6 +273,7 @@ const BGM = {
 
   prev() {
     if (!this.tracks.length) return;
+    if (this._isProcedural()) { this._startProcedural(); return; }
     let guard = 0;
     do {
       this.index = (this.index - 1 + this.tracks.length) % this.tracks.length;
@@ -159,6 +285,9 @@ const BGM = {
   setVolume(v) {
     this.volume = Math.max(0, Math.min(1, v));
     if (this.audio) this.audio.volume = this.volume;
+    if (this._pmaster && this._pctx && this._ptimer) {
+      this._pmaster.gain.setValueAtTime(this.volume * 0.5, this._pctx.currentTime);
+    }
     this._save();
     this._render();
   },

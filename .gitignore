@@ -16,3 +16,9 @@ Thumbs.db
 # 本地备份
 *.bak
 css/style.base.css
+
+# Android 构建产物（由 scripts/prepare-www.js 与 Capacitor 生成）
+android-app/www/
+android-app/node_modules/
+android-app/android/
+android-app/package-lock.json

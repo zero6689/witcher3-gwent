@@ -386,6 +386,10 @@ function cardHtml(c, opts) {
 
 /* ---------------- 启动 ---------------- */
 window.addEventListener('DOMContentLoaded', () => {
+  // 注册 Service Worker（可安装 / 离线）
+  if (typeof navigator !== 'undefined' && navigator.serviceWorker && navigator.serviceWorker.register && location.protocol.startsWith('http')) {
+    navigator.serviceWorker.register('sw.js').catch(() => { /* 忽略 */ });
+  }
   // 首次进入播放开场动画，之后进主菜单
   let seen = false;
   try { seen = sessionStorage.getItem('gwent.intro') === '1'; } catch (e) { seen = false; }
