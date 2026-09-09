@@ -61,6 +61,12 @@ class El {
   removeEventListener(t, fn) { const a = this._listeners[t] || []; const i = a.indexOf(fn); if (i >= 0) a.splice(i, 1); }
   dispatchEvent(ev) { (this._listeners[ev.type] || []).forEach(fn => fn.call(this, ev)); return true; }
   _all(acc = []) { for (const c of this.children) { acc.push(c); c._all(acc); } return acc; }
+  /** 测试用假布局：固定尺寸，便于飞行动画等逻辑跑通 */
+  getBoundingClientRect() {
+    const w = this._class.has('card') ? 64 : 200;
+    const h = this._class.has('card') ? 88 : 120;
+    return { left: 10, top: 10, width: w, height: h, right: 10 + w, bottom: 10 + h };
+  }
   querySelectorAll(sel) { return this._all().filter(n => matchesSelector(n, sel)); }
   querySelector(sel) { return this.querySelectorAll(sel)[0] || null; }
 }

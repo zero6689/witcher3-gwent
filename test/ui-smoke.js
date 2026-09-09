@@ -58,10 +58,21 @@ try {
 }
 
 /* ---------------- 流程断言 ---------------- */
-check('① 开局渲染主菜单（4 个按钮）', () => {
+check('⓪ 开场动画渲染 + 跳过', () => {
+  const intro = doc.getElementById('intro');
+  assert(intro && !intro._class.has('hidden'), '开场动画应显示');
+  assert(intro.querySelectorAll('.intro-medal .crest').length === 1, '缺少徽章');
+  assert(intro.querySelectorAll('.intro-title').length === 1, '缺少标题');
+  const skip = intro.querySelector('.intro-skip');
+  assert(skip, '缺少跳过按钮');
+  fire(skip, 'click');
+  assert(intro._class.has('hidden'), '跳过应关闭动画');
+});
+
+check('① 跳过动画后渲染主菜单（5 个按钮）', () => {
   const ov = doc.getElementById('overlay');
   assert(ov && !ov._class.has('hidden'), 'overlay 应可见');
-  assert(ov.querySelectorAll('[data-mm]').length === 4, `主菜单按钮数 ${ov.querySelectorAll('[data-mm]').length}`);
+  assert(ov.querySelectorAll('[data-mm]').length === 5, `主菜单按钮数 ${ov.querySelectorAll('[data-mm]').length}`);
   assert(ov.querySelectorAll('.mm-crest').length === 4, '主菜单应有 4 个阵营盾徽');
 });
 
@@ -205,6 +216,8 @@ check('⑨ 卡面原画（本地文件）+ 音效开关按钮', () => {
   }
 
   const sounds = (() => { try { return evalIn('globalThis.__sounds || []'); } catch (e) { return []; } })();
+  const flyCount = (() => { try { return evalIn('UI._flyCount || 0'); } catch (e) { return 0; } })();
+  await new Promise(r => setTimeout(r, 1300));   // 等结算面板弹出
 
   check('⑩ 整局对战在 UI 层跑完（困难 AI）', () => {
     assert(g.over, `未结束（steps=${steps}, round=${g.round}）`);
@@ -212,7 +225,16 @@ check('⑨ 卡面原画（本地文件）+ 音效开关按钮', () => {
   check('⑪ 音效事件被触发', () => {
     assert(sounds.length > 0, '没有触发任何音效');
   });
-  check('⑫ 渲染路径无异常', () => {
+  check('⑫ 出牌飞行动画被触发', () => {
+    assert(flyCount > 0, '没有触发飞行动画');
+  });
+  check('⑬ 局末弹出结算面板（含战绩表）', () => {
+    const ov = doc.getElementById('overlay');
+    assert(ov.querySelectorAll('.results-modal').length === 1, '结算面板未出现');
+    assert(ov.querySelectorAll('.res-table tbody tr').length >= 8, '战绩表行数不足');
+    assert(ov.querySelectorAll('.res-score').length === 1, '缺少比分');
+  });
+  check('⑭ 渲染路径无异常', () => {
     assert(errors.length === 0, '捕获异常：\n    ' + errors.slice(0, 6).join('\n    '));
   });
 

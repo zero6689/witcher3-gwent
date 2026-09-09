@@ -934,6 +934,107 @@ button.primary {
 .player-hand { overflow-x: auto; overflow-y: visible; padding-bottom: 6px; }
 
 /* ============================================================
+ *  开场动画
+ * ============================================================ */
+.intro {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+  background:
+    radial-gradient(900px 500px at 50% 45%, rgba(70,44,18,.5), transparent 70%),
+    radial-gradient(1200px 700px at 50% 120%, rgba(20,10,4,.9), transparent 70%),
+    #050403;
+  overflow: hidden;
+}
+.intro.hidden { display: none; }
+.intro-inner { text-align: center; opacity: 0; transform: scale(.9); transition: opacity 1.3s ease, transform 1.8s cubic-bezier(.2,.8,.25,1); }
+.intro.play .intro-inner { opacity: 1; transform: none; }
+
+.intro-medal-wrap { position: relative; width: 168px; height: 168px; margin: 0 auto 20px; }
+.intro-medal { position: absolute; inset: 22px; color: var(--gold); }
+.intro-medal .crest { filter: drop-shadow(0 0 22px rgba(201,162,74,.55)); }
+.intro.play .intro-medal { animation: introMedal 2.6s cubic-bezier(.2,.8,.25,1) both; }
+@keyframes introMedal {
+  0% { transform: scale(.55) rotate(-14deg); opacity: 0; }
+  60% { transform: scale(1.06) rotate(2deg); opacity: 1; }
+  100% { transform: none; opacity: 1; }
+}
+.intro-ring {
+  position: absolute; inset: 0; border-radius: 50%;
+  border: 1px solid rgba(201,162,74,.35);
+  box-shadow: inset 0 0 30px rgba(201,162,74,.18), 0 0 40px rgba(201,162,74,.12);
+  animation: introSpin 24s linear infinite;
+}
+.intro-ring::before {
+  content: ''; position: absolute; inset: 12px; border-radius: 50%;
+  border: 1px dashed rgba(201,162,74,.22);
+}
+@keyframes introSpin { to { transform: rotate(360deg); } }
+
+.intro-title {
+  font-family: var(--font-display); font-size: clamp(44px, 9vw, 76px);
+  letter-spacing: clamp(10px, 2.4vw, 22px); line-height: 1.1;
+  background: linear-gradient(180deg, #fdf3d8 6%, #d9b56b 50%, #8a6a2e 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  filter: drop-shadow(0 4px 10px rgba(0,0,0,.95));
+}
+.intro.play .intro-title { animation: introTitle 1.6s .5s cubic-bezier(.2,.8,.25,1) both; }
+@keyframes introTitle { from { opacity: 0; letter-spacing: 46px; filter: blur(6px); } to { opacity: 1; filter: blur(0); } }
+.intro-sub { font-family: var(--font-display); font-size: clamp(11px, 1.6vw, 15px); letter-spacing: clamp(4px, 1vw, 9px); color: var(--gold-dim); margin-top: 10px; }
+.intro.play .intro-sub { animation: introFade 1.2s 1.5s both; }
+.intro-line { margin-top: 26px; font-size: 12px; letter-spacing: 1px; color: rgba(160,143,110,.7); }
+.intro.play .intro-line { animation: introFade 1.2s 2.4s both; }
+@keyframes introFade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+.intro-skip {
+  position: absolute; right: 22px; bottom: 20px; z-index: 2;
+  font-family: var(--font-ui); font-size: 13px; padding: 8px 16px;
+  border-radius: 20px; background: rgba(30,22,12,.8); border: 1px solid var(--line2);
+  color: var(--gold-hi); cursor: pointer;
+}
+.intro-skip:hover { background: #4d3a1e; }
+
+/* ============================================================
+ *  结算界面
+ * ============================================================ */
+.modal.results-modal { width: min(620px, 95vw); gap: 10px; text-align: center; }
+.res-title { font-family: var(--font-display); font-size: 34px; letter-spacing: 6px; }
+.results-modal.win .res-title { color: var(--gold-hi); text-shadow: 0 0 22px rgba(240,217,160,.6), 0 2px 4px #000; }
+.results-modal.lose .res-title { color: var(--red-hi); text-shadow: 0 0 18px rgba(212,85,63,.5), 0 2px 4px #000; }
+.results-modal.draw .res-title { color: var(--silver); }
+.res-score { font-family: var(--font-display); font-size: 46px; color: var(--gold-hi); line-height: 1; letter-spacing: 4px; text-shadow: 0 2px 6px #000; }
+.res-score span { color: var(--text-dim); font-size: 30px; }
+.res-sub { font-size: 12px; color: var(--text-dim); }
+.res-rounds { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin: 4px 0 2px; }
+.res-round {
+  display: flex; flex-direction: column; gap: 2px; padding: 6px 14px; border-radius: 6px;
+  background: rgba(0,0,0,.28); border: 1px solid rgba(122,92,51,.4);
+}
+.res-round span { font-size: 10.5px; color: var(--text-dim); }
+.res-round b { font-family: var(--font-display); font-size: 17px; color: var(--gold-hi); }
+.res-round em { font-size: 10px; font-style: normal; color: var(--text-dim); }
+.res-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.res-table th { text-align: left; font-weight: 400; color: var(--text-dim); padding: 4px 6px; }
+.res-table td { text-align: center; padding: 4px 6px; color: var(--text); font-family: var(--font-display); }
+.res-table thead td { color: var(--gold); font-size: 12px; }
+.res-table tbody tr:nth-child(odd) { background: rgba(255,255,255,.03); }
+
+/* ============================================================
+ *  出牌飞行动画
+ * ============================================================ */
+.fly-ghost {
+  position: fixed !important;
+  margin: 0 !important;
+  pointer-events: none;
+  z-index: 95;
+  box-shadow: 0 18px 40px rgba(0,0,0,.85), 0 0 26px rgba(240,217,160,.4) !important;
+}
+@keyframes cardLand {
+  0% { transform: scale(1.22); filter: brightness(1.6); }
+  100% { transform: scale(1); filter: brightness(1); }
+}
+.card.landed { animation: cardLand .3s cubic-bezier(.2,.8,.25,1); }
+
+/* ============================================================
  *  回合开始横幅（你先手 / 对手先手）
  * ============================================================ */
 .turn-overlay {

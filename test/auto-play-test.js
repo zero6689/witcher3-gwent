@@ -34,6 +34,13 @@ const ok = (m) => console.log('✅ ' + m);
 const bad = (m) => { fail++; console.log('❌ ' + m); };
 const assert = (c, m) => { if (!c) throw new Error(m); };
 
+/* 跳过开场动画，进入主菜单 */
+{
+  const intro = doc.getElementById('intro');
+  const skip = intro && intro.querySelector('.intro-skip');
+  if (skip) fire(skip, 'click');
+}
+
 /* 开局：主菜单 → 北方 + 普通 + 一键填充 + 不换牌 */
 fire(doc.getElementById('overlay').querySelectorAll('[data-mm]').find(e => e.dataset.mm === 'play'), 'click');
 fire(doc.getElementById('overlay').querySelectorAll('.fc').find(e => e.dataset.fac === 'northern'), 'click');

@@ -80,8 +80,15 @@ class GwentGame {
     this.log = [];
     this.events = [];            // 供 UI 消费的事件队列（音效/动画）
     this.pendingScorch = null;   // 焚风连锁待结算
+    this.roundHistory = [];      // 每局比分记录（结算界面用）
+    this.stats = { player: this._blankStats(), ai: this._blankStats() };
     this.aiSkill = cfg.aiSkill == null ? 0.6 : cfg.aiSkill;
     this.difficulty = cfg.difficulty || 'normal';
+  }
+
+  /** 空统计表（结算界面用） */
+  _blankStats() {
+    return { units: 0, specials: 0, spies: 0, medics: 0, musters: 0, leaders: 0, scorches: 0, weather: 0, horn: 0, passed: 0, power: 0 };
   }
 
   _buildSide(name, deck) {
@@ -349,6 +356,7 @@ class GwentGame {
     }
 
     // 阶段推进（医生待选时挂起，等 UI 调用 applyMedic 后再推进）
+    this._recordPlay(sideName, card);
     this._emit(events);
     if (!deferTurn) this._afterPlay(sideName, events);
     this.refresh();
@@ -560,6 +568,7 @@ class GwentGame {
     if (this.passed[sideName]) return { ok: false, error: '本局你已过牌' };
     this.passed[sideName] = true;
     this._log(sideName, `${sideName === 'player' ? '你' : '对手'}选择【过】`);
+    if (this.stats[sideName]) this.stats[sideName].passed++;
     this._emit([{ type: 'pass', side: sideName }]);
     this._afterPlay(sideName, [{ type: 'pass', side: sideName }]);
     return { ok: true };
@@ -606,6 +615,7 @@ class GwentGame {
       this._log('sys', `${this.roundWinner === 'player' ? '你' : '对手'}赢得第 ${this.round} 局！`);
     }
     // 检查整局胜负
+    this.roundHistory.push({ round: this.round, player: ps, ai: as, winner: this.roundWinner });
     this._emit([{ type: 'roundEnd', winner: this.roundWinner, scores: { player: ps, ai: as }, round: this.round }]);
     if (this.side.player.roundsWon >= 2 || this.side.ai.roundsWon >= 2) {
       this.over = true;
@@ -810,6 +820,7 @@ class GwentGame {
       default: return { ok: false, error: '未知领袖效果' };
     }
     s.leaderUsed = true;
+    if (this.stats[sideName]) this.stats[sideName].leaders++;
     this._emit([{ type: 'leader', effect: e, side: sideName }].concat(evs));
     this._afterPlay(sideName, evs);
     this.refresh();
@@ -876,6 +887,24 @@ class GwentGame {
       }
     }
     return { ok: false, error: '没有可收回的单位' };
+  }
+
+  /** 记录出牌统计（结算界面用） */
+  _recordPlay(sideName, card) {
+    const st = this.stats[sideName];
+    if (!st || !card) return;
+    if (card.type === 'special') {
+      st.specials++;
+      if (card.kind === 'weather') st.weather++;
+      else if (card.kind === 'horn') st.horn++;
+      else if (card.kind === 'scorch') st.scorches++;
+    } else {
+      st.units++;
+      st.power += card.power || 0;
+      if (card.ability === 'spy') st.spies++;
+      else if (card.ability === 'medic') st.medics++;
+      else if (card.ability === 'muster') st.musters++;
+    }
   }
 
   /* ---------- 事件队列 ---------- */

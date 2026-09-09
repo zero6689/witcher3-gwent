@@ -7,6 +7,41 @@ const GAME_CFG = { aiSkill: 0.5 };
 
 let game = null;
 
+/* ---------------- 开场动画 ---------------- */
+function showIntro(onDone) {
+  const el = document.getElementById('intro');
+  if (!el) { if (onDone) onDone(); return; }
+  el.innerHTML = `
+    <div class="intro-inner">
+      <div class="intro-medal-wrap">
+        <div class="intro-ring"></div>
+        <div class="intro-medal">${emblemHtml('monsters')}</div>
+      </div>
+      <div class="intro-title">昆特牌</div>
+      <div class="intro-sub">GWENT · THE WITCHER 3</div>
+      <div class="intro-line">二创同人作品 · 非商业用途 · 仅供个人学习娱乐</div>
+    </div>
+    <button class="intro-skip">跳过 ▶</button>`;
+  el.classList.remove('hidden');
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => el.classList.add('play'));
+  else el.classList.add('play');
+
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(showIntro._timer);
+    el.classList.remove('play');
+    el.classList.add('hidden');
+    el.innerHTML = '';
+    if (typeof SFX !== 'undefined') SFX.unlock();
+    if (onDone) onDone();
+  };
+  const skip = el.querySelector('.intro-skip');
+  if (skip) skip.addEventListener('click', finish, { once: true });
+  showIntro._timer = setTimeout(finish, 6400);
+}
+
 /* ---------------- 0. 主菜单 ---------------- */
 function showMainMenu() {
   const ov = document.getElementById('overlay');
@@ -21,6 +56,7 @@ function showMainMenu() {
       <div class="mm-buttons">
         <button class="mm-btn primary" data-mm="play">开始游戏</button>
         <button class="mm-btn" data-mm="config">配置卡牌</button>
+        <button class="mm-btn" data-mm="intro">开场动画</button>
         <button class="mm-btn" data-mm="sound">音乐与音效</button>
         <button class="mm-btn" data-mm="about">关于 / 声明</button>
       </div>
@@ -32,6 +68,7 @@ function showMainMenu() {
       const a = el.dataset.mm;
       if (a === 'play') showFactionSelect('play');
       else if (a === 'config') showFactionSelect('config');
+      else if (a === 'intro') showIntro(showMainMenu);
       else if (a === 'sound') showSoundPanel(showMainMenu);
       else if (a === 'about') showAboutPanel(showMainMenu);
     });
@@ -349,6 +386,15 @@ function cardHtml(c, opts) {
 
 /* ---------------- 启动 ---------------- */
 window.addEventListener('DOMContentLoaded', () => {
-  showMainMenu();
+  // 首次进入播放开场动画，之后进主菜单
+  let seen = false;
+  try { seen = sessionStorage.getItem('gwent.intro') === '1'; } catch (e) { seen = false; }
+  if (seen) showMainMenu();
+  else {
+    showIntro(() => {
+      try { sessionStorage.setItem('gwent.intro', '1'); } catch (e) { /* ignore */ }
+      showMainMenu();
+    });
+  }
 });
 

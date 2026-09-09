@@ -18,6 +18,8 @@ const UI = {
     this._prevUids = new Set();
     this._prevHand = new Set();
     this._lastRound = 0;
+    this._shownResults = false;
+    this._flyFrom = null;
     this._dispScore = { player: 0, ai: 0 };
     this._scoreAnim = {};
     this.bindStatic();
@@ -62,6 +64,7 @@ const UI = {
     for (const s of ['player', 'ai']) for (const r of ROWS) {
       for (const c of g.side[s].rows[r]) if (!c.tomb) uids.add(c.uid);
     }
+    const added = [...uids].filter(u => !this._prevUids.has(u));
     this._prevUids = uids;
     this._prevHand = new Set(g.side.player.hand.map(c => c.uid));
     // 新一局开始 → 全宽横幅提示先后手
@@ -71,6 +74,144 @@ const UI = {
     }
     this._animateScore('player', g.scores.player);
     this._animateScore('ai', g.scores.ai);
+    this._flyAdded(added);
+    // 对局结束 → 结算面板
+    if (g.over && !this._shownResults) { this._shownResults = true; setTimeout(() => this.showResults(), 700); }
+  },
+
+  /* ---------------- 出牌飞行动画 ---------------- */
+  /** 记录手牌出处（点击时调用），供 _afterRender 播放飞行动画 */
+  markFlySource(uid, el) {
+    if (!el || !el.getBoundingClientRect) return;
+    const r = el.getBoundingClientRect();
+    if (r && r.width) this._flyFrom = { uid, rect: r };
+  },
+
+  _flyAdded(added) {
+    if (!added || !added.length) return;
+    if (typeof document === 'undefined' || !document.querySelector) return;
+    for (const uid of added) {
+      let el = null;
+      try { el = document.querySelector('[data-uid="' + uid + '"]'); } catch (e) { el = null; }
+      if (!el || !el.getBoundingClientRect) continue;
+      const to = el.getBoundingClientRect();
+      if (!to || !to.width) continue;
+      let from = null;
+      if (this._flyFrom && this._flyFrom.uid === uid) from = this._flyFrom.rect;
+      else {
+        const src = this.el('enemySide');
+        if (src && src.getBoundingClientRect) from = src.getBoundingClientRect();
+      }
+      if (!from || !from.width) continue;
+      this._animateFly(el, from, to);
+    }
+    this._flyFrom = null;
+  },
+
+  _animateFly(targetEl, from, to) {
+    if (typeof document.createElement !== 'function') return;
+    this._flyCount = (this._flyCount || 0) + 1;
+    const ghost = document.createElement('div');
+    ghost.className = (targetEl.className || 'card') + ' fly-ghost';
+    ghost.innerHTML = targetEl.innerHTML;
+    ghost.style.cssText = `position:fixed;left:${from.left}px;top:${from.top}px;width:${from.width}px;height:${from.height}px;z-index:95;pointer-events:none;margin:0;`;
+    document.body.appendChild(ghost);
+    targetEl.style.opacity = '0';
+    const dx = to.left - from.left + (to.width - from.width) / 2;
+    const dy = to.top - from.top + (to.height - from.height) / 2;
+    const sc = Math.max(0.2, to.width / from.width);
+    const done = () => {
+      if (ghost.parentNode) ghost.parentNode.removeChild(ghost);
+      targetEl.style.opacity = '';
+      targetEl.classList.add('landed');
+      setTimeout(() => targetEl.classList.remove('landed'), 300);
+    };
+    if (ghost.animate) {
+      const anim = ghost.animate([
+        { transform: 'translate(0,0) scale(1) rotate(0deg)', opacity: 1 },
+        { transform: `translate(${dx * 0.55}px, ${dy * 0.55 - 52}px) scale(${(1 + sc) / 2}) rotate(-9deg)`, opacity: 1, offset: 0.6 },
+        { transform: `translate(${dx}px, ${dy}px) scale(${sc}) rotate(0deg)`, opacity: 1 }
+      ], { duration: 430, easing: 'cubic-bezier(.3,.7,.3,1)' });
+      anim.onfinish = done;
+      anim.oncancel = done;
+    } else done();
+  },
+
+  /** 特殊牌（天气/天晴/焚风）飞向中线后消散 */
+  _flySpecial(card, fromRect) {
+    if (!fromRect || !fromRect.width || typeof document.createElement !== 'function') return;
+    this._flyCount = (this._flyCount || 0) + 1;
+    const mid = this.el('midline');
+    const to = mid && mid.getBoundingClientRect ? mid.getBoundingClientRect() : null;
+    if (!to || !to.width) return;
+    const ghost = document.createElement('div');
+    ghost.className = 'card special-card fly-ghost';
+    ghost.innerHTML = cardFaceHtml(card);
+    ghost.style.cssText = `position:fixed;left:${fromRect.left}px;top:${fromRect.top}px;width:${fromRect.width}px;height:${fromRect.height}px;z-index:95;pointer-events:none;margin:0;`;
+    document.body.appendChild(ghost);
+    const dx = (to.left + to.width / 2) - (fromRect.left + fromRect.width / 2);
+    const dy = (to.top + to.height / 2) - (fromRect.top + fromRect.height / 2);
+    const done = () => { if (ghost.parentNode) ghost.parentNode.removeChild(ghost); };
+    if (ghost.animate) {
+      const anim = ghost.animate([
+        { transform: 'translate(0,0) scale(1)', opacity: 1 },
+        { transform: `translate(${dx}px, ${dy}px) scale(.8) rotate(6deg)`, opacity: 1, offset: 0.75 },
+        { transform: `translate(${dx}px, ${dy}px) scale(.5) rotate(10deg)`, opacity: 0 }
+      ], { duration: 560, easing: 'cubic-bezier(.3,.7,.3,1)' });
+      anim.onfinish = done; anim.oncancel = done;
+    } else done();
+  },
+
+  /* ---------------- 结算界面 ---------------- */
+  showResults() {
+    const g = this.g;
+    if (!g) return;
+    const ov = this.el('overlay');
+    const win = g.winner === 'player', draw = !g.winner;
+    const st = g.stats;
+    const row = (label, a, b) => `<tr><th>${label}</th><td>${a}</td><td>${b}</td></tr>`;
+    const rounds = g.roundHistory.map(r =>
+      `<div class="res-round"><span>第 ${r.round} 局</span><b>${r.player} : ${r.ai}</b><em>${r.winner === 'player' ? '你胜' : r.winner === 'ai' ? '对手胜' : '平'}</em></div>`
+    ).join('');
+
+    ov.classList.remove('hidden');
+    ov.innerHTML = `
+      <div class="modal results-modal ${win ? 'win' : draw ? 'draw' : 'lose'}">
+        <div class="res-title">${win ? '🏆 胜利' : draw ? '⚖️ 平局' : '☠️ 失败'}</div>
+        <div class="res-score">${g.side.player.roundsWon} <span>:</span> ${g.side.ai.roundsWon}</div>
+        <div class="res-sub">${FACTIONS[g.side.player.deck.faction].zh} · ${g.side.player.deck.leader.name.zh} &nbsp;VS&nbsp; ${FACTIONS[g.side.ai.deck.faction].zh} · ${g.side.ai.deck.leader.name.zh}</div>
+        <div class="res-rounds">${rounds}</div>
+        <table class="res-table">
+          <thead><tr><th></th><td>你</td><td>对手</td></tr></thead>
+          <tbody>
+            ${row('打出单位', st.player.units, st.ai.units)}
+            ${row('打出特殊牌', st.player.specials, st.ai.specials)}
+            ${row('间谍', st.player.spies, st.ai.spies)}
+            ${row('医生复活', st.player.medics, st.ai.medics)}
+            ${row('召唤', st.player.musters, st.ai.musters)}
+            ${row('天气', st.player.weather, st.ai.weather)}
+            ${row('号角', st.player.horn, st.ai.horn)}
+            ${row('焚风', st.player.scorches, st.ai.scorches)}
+            ${row('领袖技', st.player.leaders, st.ai.leaders)}
+            ${row('过牌次数', st.player.passed, st.ai.passed)}
+            ${row('出牌总战力', st.player.power, st.ai.power)}
+          </tbody>
+        </table>
+        <div class="sp-actions">
+          <button id="resMenu" class="chip">返回主菜单</button>
+          <button id="resAgain" class="primary">再来一局</button>
+        </div>
+      </div>`;
+    document.getElementById('resMenu').addEventListener('click', () => {
+      ov.classList.add('hidden'); ov.innerHTML = '';
+      this._shownResults = false;
+      if (typeof showMainMenu === 'function') showMainMenu();
+    });
+    document.getElementById('resAgain').addEventListener('click', () => {
+      ov.classList.add('hidden'); ov.innerHTML = '';
+      this._shownResults = false;
+      if (typeof showFactionSelect === 'function') showFactionSelect('play');
+    });
   },
 
   /** 总分数字滚动 */
@@ -470,10 +611,17 @@ const UI = {
     if (c.type === 'special' && c.kind === 'horn') targetRow = this._bestHornRow();
     else if (c.type !== 'special') targetRow = this._autoRow(c);
 
+    // 记录手牌位置，供飞行动画
+    const srcEl = this.el('playerHand') && this.el('playerHand').querySelectorAll('.card')[i];
+    const srcRect = srcEl && srcEl.getBoundingClientRect ? srcEl.getBoundingClientRect() : null;
+    const isSpecial = c.type === 'special';
+
     const res = g.playCard('player', i, targetRow);
     if (res.ok) {
       this.sel = null;
       if (typeof SFX !== 'undefined') SFX.play('card');
+      if (isSpecial && srcRect) this._flySpecial(c, srcRect);
+      else this.markFlySource(c.uid, srcEl);
       this.afterAction();
     } else {
       this.toast(res.error || '这张牌现在打不出去');
