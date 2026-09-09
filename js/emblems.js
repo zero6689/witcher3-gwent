@@ -80,3 +80,42 @@ const EMBLEM = {
 };
 
 function emblemSvg(faction) { return EMBLEM[faction] || EMBLEM.neutral; }
+
+/* ============================================================
+ *  月桂花环徽章（比分用）
+ *  两条贝塞尔弧线上的叶片，右侧生成后镜像到左侧
+ * ============================================================ */
+function _laurelBranch(mirror) {
+  const P0 = [54, 86], P1 = [95, 50], P2 = [60, 14];
+  let out = '';
+  const N = 11;
+  for (let i = 0; i < N; i++) {
+    const t = i / (N - 1), mt = 1 - t;
+    const x = mt * mt * P0[0] + 2 * mt * t * P1[0] + t * t * P2[0];
+    const y = mt * mt * P0[1] + 2 * mt * t * P1[1] + t * t * P2[1];
+    const dx = 2 * mt * (P1[0] - P0[0]) + 2 * t * (P2[0] - P1[0]);
+    const dy = 2 * mt * (P1[1] - P0[1]) + 2 * t * (P2[1] - P1[1]);
+    const deg = Math.atan2(dy, dx) * 180 / Math.PI;
+    const side = i % 2 === 0 ? 1 : -1;                    // 叶片左右交替
+    const ox = Math.cos((deg + 90 * side) * Math.PI / 180) * 3.2;
+    const oy = Math.sin((deg + 90 * side) * Math.PI / 180) * 3.2;
+    const rx = 5.4 - i * 0.12, ry = 2.5 - i * 0.05;
+    out += `<ellipse cx="0" cy="0" rx="${rx.toFixed(2)}" ry="${ry.toFixed(2)}" transform="translate(${(x + ox).toFixed(1)},${(y + oy).toFixed(1)}) rotate(${deg.toFixed(0)})"/>`;
+  }
+  return mirror
+    ? `<g transform="translate(100,0) scale(-1,1)">${out}</g>`
+    : `<g>${out}</g>`;
+}
+
+function laurelSvg() {
+  return `<svg viewBox="0 0 100 100" class="laurel-svg" aria-hidden="true">
+    <g fill="currentColor">${_laurelBranch(false)}${_laurelBranch(true)}</g>
+    <path d="M54 86 Q95 50 60 14" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".65"/>
+    <path d="M46 86 Q5 50 40 14" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".65"/>
+  </svg>`;
+}
+
+/** 月桂花环比分徽章 */
+function laurelHtml(value, cls) {
+  return `<div class="laurel ${cls || ''}">${laurelSvg()}<b class="laurel-num">${value}</b></div>`;
+}

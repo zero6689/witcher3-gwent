@@ -16,6 +16,8 @@ const UI = {
     this.g = g;
     this.sel = null;
     this._prevUids = new Set();
+    this._prevHand = new Set();
+    this._lastRound = 0;
     this._dispScore = { player: 0, ai: 0 };
     this._scoreAnim = {};
     this.bindStatic();
@@ -62,6 +64,11 @@ const UI = {
     }
     this._prevUids = uids;
     this._prevHand = new Set(g.side.player.hand.map(c => c.uid));
+    // 新一局开始 → 全宽横幅提示先后手
+    if (g.round !== this._lastRound && !g.needMulligan && !g.over) {
+      this._lastRound = g.round;
+      this._turnOverlay(g.current === 'player' ? '你先手' : '对手先手');
+    }
     this._animateScore('player', g.scores.player);
     this._animateScore('ai', g.scores.ai);
   },
@@ -71,7 +78,7 @@ const UI = {
     const cur = this._dispScore[side] || 0;
     if (cur === target) return;
     const el = side === 'player' ? this.el('playerSide') : this.el('enemySide');
-    const b = el && el.querySelector ? el.querySelector('.sp-score b') : null;
+    const b = el && el.querySelector ? el.querySelector('.laurel-num') : null;
     if (!b) { this._dispScore[side] = target; return; }
     if (this._scoreAnim[side]) cancelAnimationFrame(this._scoreAnim[side]);
     const from = cur, dur = 420, t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
@@ -94,6 +101,18 @@ const UI = {
     t.classList.remove('flash');
     void t.offsetWidth;      // 触发重排以重启动画
     t.classList.add('flash');
+  },
+
+  /** 全宽回合横幅：「你先手」+ 沙漏 */
+  _turnOverlay(text) {
+    const el = this.el('turnOverlay');
+    if (!el) return;
+    el.innerHTML = `<span class="to-hourglass">⏳</span><span class="to-text">${text}</span>`;
+    el.classList.remove('show');
+    void el.offsetWidth;
+    el.classList.add('show');
+    clearTimeout(this._toTimer);
+    this._toTimer = setTimeout(() => el.classList.remove('show'), 1900);
   },
 
   /* ---------------- 顶栏 ---------------- */
@@ -132,7 +151,7 @@ const UI = {
     this.renderPlayerHand();
   },
 
-  /* ---------------- 侧边阵营面板（盾徽 / 领袖 / 分数 / 牌堆） ---------------- */
+  /* ---------------- 侧边阵营面板（头像 / 金币 / 红宝石 / 花环比分 / 牌堆） ---------------- */
   renderSidePanel(sideName) {
     const g = this.g;
     const side = g.side[sideName];
@@ -142,21 +161,27 @@ const UI = {
     if (!host) return;
     const leaderArt = side.deck.leader.art;
     const score = isEnemy ? g.scores.ai : g.scores.player;
+    const won = side.roundsWon;
 
     host.innerHTML = `
       <div class="sp-top">
         <span class="sp-crest">${emblemHtml(side.deck.faction)}</span>
         <span class="sp-name">${fac.zh}</span>
       </div>
-      <div class="sp-leader">
-        <div class="sp-leader-art" style="${leaderArt ? `background-image:url('${leaderArt}')` : `background:linear-gradient(150deg,${fac.color1},${fac.color2})`}"></div>
-        <div class="sp-leader-name">${side.deck.leader.name.zh}</div>
+      <div class="sp-avatar" title="${side.deck.leader.name.zh}">
+        <div class="sp-avatar-img" style="${leaderArt ? `background-image:url('${leaderArt}')` : `background:linear-gradient(150deg,${fac.color1},${fac.color2})`}"></div>
       </div>
-      <div class="sp-score"><b>${score}</b></div>
+      <div class="sp-leader-name">${side.deck.leader.name.zh}</div>
+      <div class="sp-meta">
+        <span class="sp-coin" title="手牌 ${side.hand.length} 张"><i>🪙</i>${side.hand.length}</span>
+        <span class="sp-rubies" title="已赢 ${won} 局">
+          <i class="ruby${won >= 1 ? ' lit' : ''}"></i><i class="ruby${won >= 2 ? ' lit' : ''}"></i>
+        </span>
+      </div>
+      ${laurelHtml(score, isEnemy ? 'enemy' : 'player')}
       <div class="sp-stats">牌堆 ${side.pile.length} · 坟场 ${side.graveyard.length}</div>
       ${isEnemy ? `<div class="sp-hand" title="对手手牌 ${side.hand.length} 张">${Array.from({ length: side.hand.length }, () => '<i class="back-mini"></i>').join('')}</div>` : ''}
     `;
-    // 牌堆/坟场信息也同步到侧边
     const pile = this.el(isEnemy ? 'enemyDiscard' : 'playerDiscard');
     if (pile) pile.innerHTML = `<span class="count">牌堆 ${side.pile.length}</span><span class="count">坟场 ${side.graveyard.length}</span>`;
   },

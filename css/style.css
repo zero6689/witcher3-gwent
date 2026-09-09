@@ -934,6 +934,121 @@ button.primary {
 .player-hand { overflow-x: auto; overflow-y: visible; padding-bottom: 6px; }
 
 /* ============================================================
+ *  回合开始横幅（你先手 / 对手先手）
+ * ============================================================ */
+.turn-overlay {
+  position: fixed; left: 0; right: 0; top: 50%; transform: translateY(-50%) scaleY(.7);
+  height: 15vh; min-height: 66px; z-index: 85;
+  display: flex; align-items: center; justify-content: center; gap: 16px;
+  background: linear-gradient(180deg, rgba(6,4,2,0), rgba(6,4,2,.88) 18%, rgba(6,4,2,.88) 82%, rgba(6,4,2,0));
+  border-top: 1px solid rgba(201,162,74,.35);
+  border-bottom: 1px solid rgba(201,162,74,.35);
+  opacity: 0; pointer-events: none;
+  transition: opacity .28s, transform .28s;
+}
+.turn-overlay.show { opacity: 1; transform: translateY(-50%) scaleY(1); }
+.to-hourglass { font-size: clamp(22px, 3.4vh, 40px); filter: sepia(.7) saturate(1.3) drop-shadow(0 0 8px rgba(201,162,74,.6)); }
+.to-text {
+  font-family: var(--font-display); font-weight: 700;
+  font-size: clamp(26px, 5vh, 54px); letter-spacing: 8px;
+  color: #c9a24a;
+  text-shadow: 0 0 2px #3a2a08, 0 2px 0 #2a1c06, 0 3px 10px rgba(0,0,0,.95), 0 0 22px rgba(201,162,74,.45);
+}
+
+/* ============================================================
+ *  侧边信息栏：银环圆头像 + 金币 + 红宝石 + 月桂花环比分
+ * ============================================================ */
+.side-panel { flex: 0 0 132px; gap: 4px; }
+.sp-top { display: flex; align-items: center; gap: 4px; }
+.sp-crest { width: 26px; height: 29px; flex: 0 0 auto; }
+.sp-name { font-size: 11px; letter-spacing: 0; }
+
+/* 圆形银环头像 */
+.sp-avatar {
+  width: 62px; height: 62px; border-radius: 50%; padding: 3px;
+  background:
+    conic-gradient(from 210deg, #f2f4f7, #9aa1a8 25%, #d9dde2 50%, #7c848c 75%, #f2f4f7);
+  box-shadow: 0 2px 10px rgba(0,0,0,.75), inset 0 0 0 1px rgba(255,255,255,.35);
+  position: relative;
+}
+.sp-avatar::after {
+  content: ''; position: absolute; inset: 3px; border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.55), inset 0 -3px 8px rgba(0,0,0,.6);
+  pointer-events: none;
+}
+.sp-avatar-img {
+  width: 100%; height: 100%; border-radius: 50%;
+  background-size: cover !important; background-position: center 16% !important;
+  background-color: #241a10;
+}
+.sp-leader-name { font-size: 9.5px; color: var(--text-dim); text-align: center; line-height: 1.25; }
+
+/* 金币 + 红宝石 */
+.sp-meta { display: flex; align-items: center; gap: 8px; }
+.sp-coin { display: inline-flex; align-items: center; gap: 2px; font-size: 11.5px; color: var(--gold-hi); font-family: var(--font-display); }
+.sp-coin i { font-style: normal; font-size: 11px; filter: drop-shadow(0 1px 2px rgba(0,0,0,.8)); }
+.sp-rubies { display: inline-flex; gap: 3px; }
+.ruby {
+  width: 11px; height: 11px; display: block; border-radius: 2px;
+  background: linear-gradient(140deg, #7a1412, #3d0a09);
+  transform: rotate(45deg);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.7);
+  opacity: .45;
+  transition: all .3s;
+}
+.ruby.lit {
+  background: linear-gradient(140deg, #ff6b63 8%, #c22c2a 45%, #7a1412 100%);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.6), inset 2px 2px 3px rgba(255,255,255,.55), 0 0 8px rgba(194,44,42,.85);
+  opacity: 1;
+}
+
+/* 月桂花环比分 */
+.laurel {
+  position: relative; width: 74px; height: 74px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--gold);
+  filter: drop-shadow(0 2px 6px rgba(0,0,0,.85));
+}
+.laurel-svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.laurel-num {
+  position: relative; z-index: 2;
+  font-family: var(--font-display); font-size: 26px; font-weight: 700; line-height: 1;
+  color: #f6e6bd;
+  text-shadow: 0 2px 3px #000, 0 0 10px rgba(201,162,74,.6);
+}
+.laurel.player .laurel-num { color: #fdf3d8; }
+.laurel.enemy .laurel-num { color: #f0d0c0; }
+
+@media (max-width: 900px) {
+  .side-panel { flex: 0 0 96px; }
+  .sp-avatar { width: 48px; height: 48px; }
+  .laurel { width: 56px; height: 56px; }
+  .laurel-num { font-size: 20px; }
+  .sp-coin { font-size: 10px; }
+  .ruby { width: 9px; height: 9px; }
+}
+@media (max-width: 640px) {
+  .side-panel { flex: 0 0 76px; gap: 2px; }
+  .sp-avatar { width: 38px; height: 38px; padding: 2px; }
+  .laurel { width: 46px; height: 46px; }
+  .laurel-num { font-size: 17px; }
+  .sp-crest { width: 20px; height: 22px; }
+  .sp-name { font-size: 9px; }
+  .sp-leader-name { font-size: 8px; }
+  .sp-stats { font-size: 8px; }
+}
+@media (orientation: landscape) and (max-height: 600px), (max-height: 480px) {
+  .side-panel { flex: 0 0 62px; gap: 1px; }
+  .sp-avatar { width: 30px; height: 30px; padding: 2px; }
+  .laurel { width: 36px; height: 36px; }
+  .laurel-num { font-size: 14px; }
+  .sp-coin { font-size: 9px; }
+  .ruby { width: 7px; height: 7px; }
+  .sp-crest { width: 18px; height: 20px; }
+  .sp-leader-name { display: none; }
+}
+
+/* ============================================================
  *  卡面重绘（对齐参考版：银白战力圆徽 + 阵营竖条 + 技能圆徽 + 羊皮纸名字带）
  * ============================================================ */
 .card { overflow: hidden; }
