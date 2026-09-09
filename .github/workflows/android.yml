@@ -6,17 +6,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths:
-      - 'index.html'
-      - 'css/**'
-      - 'js/**'
-      - 'assets/**'
-      - 'icons/**'
-      - 'manifest.webmanifest'
-      - 'sw.js'
-      - 'scripts/prepare-www.js'
-      - 'android-app/**'
-      - '.github/workflows/android.yml'
+    tags: ['v*']
+  release:
+    types: [published]
 
 permissions:
   contents: write
