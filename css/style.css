@@ -1035,6 +1035,47 @@ button.primary {
 .card.landed { animation: cardLand .3s cubic-bezier(.2,.8,.25,1); }
 
 /* ============================================================
+ *  BGM 曲库面板（更换音乐）
+ * ============================================================ */
+.bgm-panel {
+  position: fixed; right: 12px; bottom: 62px; z-index: 82;
+  width: min(360px, 92vw); max-height: 66vh;
+  display: none; flex-direction: column; gap: 8px;
+  padding: 12px 12px 10px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(52,38,20,.97), rgba(20,14,8,.98));
+  border: 1px solid var(--line2);
+  box-shadow: 0 10px 34px rgba(0,0,0,.85), inset 0 1px 0 rgba(240,217,160,.16);
+  font-family: var(--font-ui);
+}
+.bgm-panel.show { display: flex; }
+.bp-head { display: flex; align-items: center; justify-content: space-between; font-family: var(--font-display); letter-spacing: 2px; color: var(--gold-hi); font-size: 15px; }
+.bp-close { width: 24px; height: 24px; padding: 0; border-radius: 50%; font-size: 12px; }
+.bp-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.bp-item {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px;
+  background: rgba(0,0,0,.28); border: 1px solid rgba(122,92,51,.35); cursor: pointer;
+  transition: all .14s;
+}
+.bp-item:hover { border-color: var(--line2); background: rgba(255,255,255,.05); }
+.bp-item.active { border-color: var(--gold-hi); box-shadow: 0 0 12px rgba(200,161,90,.35); background: rgba(107,79,30,.32); }
+.bp-play { flex: 0 0 16px; font-size: 11px; color: var(--gold); }
+.bp-info { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.bp-name { font-size: 12.5px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bp-item.active .bp-name { color: var(--gold-hi); }
+.bp-meta { font-size: 10px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bp-del { flex: 0 0 auto; width: 22px; height: 22px; padding: 0; border-radius: 50%; font-size: 11px; }
+.bp-empty { padding: 12px; text-align: center; font-size: 12px; color: var(--text-dim); }
+.bp-foot { display: flex; }
+.bp-add { flex: 1 1 auto; font-size: 12.5px; padding: 8px; }
+.bp-hint { font-size: 10.5px; line-height: 1.6; color: var(--text-dim); }
+.bp-hint code { color: var(--gold); font-size: 10px; }
+
+@media (max-width: 640px) {
+  .bgm-panel { right: 8px; bottom: 54px; width: min(300px, 94vw); max-height: 60vh; padding: 10px; }
+}
+
+/* ============================================================
  *  回合开始横幅（你先手 / 对手先手）
  * ============================================================ */
 .turn-overlay {

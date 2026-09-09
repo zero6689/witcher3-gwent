@@ -58,7 +58,7 @@ const BGM = {
     } catch (e) { /* ignore */ }
   },
 
-  /* ---------------- 探测可用音频 ---------------- */
+  /* ---------------- 探测可用音频 + 读取用户曲库 ---------------- */
   async _probe() {
     const found = [];
     for (const c of this.candidates) {
@@ -70,7 +70,15 @@ const BGM = {
         }
       }
     }
-    // 没有真实音频文件 → 用内置合成曲（原创、无版权）
+    // 用户自己添加的曲目（IndexedDB 持久保存）
+    const mine = await this._idbAll();
+    for (const rec of mine) {
+      found.push({
+        id: rec.id, title: rec.title, artist: '本地文件 · 自己添加',
+        blob: rec.blob, src: URL.createObjectURL(rec.blob), user: true,
+      });
+    }
+    // 一个都没有 → 用内置合成曲（原创、无版权）
     if (!found.length) {
       found.push({ title: '酒馆夜曲', artist: '内置合成 · 原创无版权', procedural: true });
     }
@@ -229,17 +237,199 @@ const BGM = {
 
   current() { return this.tracks[this.index] || null; },
 
-  /* ---------------- 播放控制 ---------------- */
+  /* ---------------- IndexedDB：保存用户添加的音乐 ---------------- */
+  _idb() {
+    if (this._dbp) return this._dbp;
+    if (typeof indexedDB === 'undefined') return Promise.reject(new Error('no indexedDB'));
+    this._dbp = new Promise((res, rej) => {
+      const req = indexedDB.open('gwent-bgm', 1);
+      req.onupgradeneeded = () => {
+        if (!req.result.objectStoreNames.contains('tracks')) req.result.createObjectStore('tracks', { keyPath: 'id' });
+      };
+      req.onsuccess = () => res(req.result);
+      req.onerror = () => rej(req.error);
+    });
+    return this._dbp;
+  },
+
+  async _idbAll() {
+    try {
+      const db = await this._idb();
+      return await new Promise((res, rej) => {
+        const r = db.transaction('tracks', 'readonly').objectStore('tracks').getAll();
+        r.onsuccess = () => res(r.result || []);
+        r.onerror = () => rej(r.error);
+      });
+    } catch (e) { return []; }
+  },
+
+  async _idbPut(rec) {
+    try {
+      const db = await this._idb();
+      await new Promise((res, rej) => {
+        const tx = db.transaction('tracks', 'readwrite');
+        tx.objectStore('tracks').put(rec);
+        tx.oncomplete = () => res();
+        tx.onerror = () => rej(tx.error);
+      });
+      return true;
+    } catch (e) { return false; }
+  },
+
+  async _idbDelete(id) {
+    try {
+      const db = await this._idb();
+      await new Promise((res, rej) => {
+        const tx = db.transaction('tracks', 'readwrite');
+        tx.objectStore('tracks').delete(id);
+        tx.oncomplete = () => res();
+        tx.onerror = () => rej(tx.error);
+      });
+    } catch (e) { /* ignore */ }
+  },
+
+  /* ---------------- 用户添加 / 删除 / 切换曲目 ---------------- */
+  async addFiles(fileList) {
+    const files = Array.from(fileList || []).filter(f => /^audio\//.test(f.type) || /\.(mp3|ogg|m4a|wav|flac|aac)$/i.test(f.name));
+    if (!files.length) { this._toast('请选择音频文件（mp3 / ogg / m4a / wav）'); return; }
+    let added = 0;
+    for (const f of files) {
+      const id = 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+      const title = f.name.replace(/\.[^.]+$/, '');
+      const rec = { id, title, blob: f };
+      const saved = await this._idbPut(rec);
+      this.tracks.push({
+        id, title, artist: '本地文件 · 自己添加',
+        blob: f, src: URL.createObjectURL(f), user: true, persisted: saved,
+      });
+      added++;
+    }
+    this._toast(`已添加 ${added} 首，正在播放第一首`);
+    this.index = this.tracks.length - added;
+    this._loadCurrent(true);
+    this._render();
+    this.renderPanel();
+  },
+
+  async removeTrack(idx) {
+    const t = this.tracks[idx];
+    if (!t) return;
+    if (t.user && t.id) await this._idbDelete(t.id);
+    const wasCurrent = idx === this.index;
+    this.tracks.splice(idx, 1);
+    if (!this.tracks.length) {
+      this.tracks.push({ title: '酒馆夜曲', artist: '内置合成 · 原创无版权', procedural: true });
+      this.index = 0;
+      this._loadCurrent(true);
+    } else if (wasCurrent) {
+      this.index = Math.min(idx, this.tracks.length - 1);
+      this._loadCurrent(true);
+    } else if (idx < this.index) this.index--;
+    this._render();
+    this.renderPanel();
+  },
+
+  selectTrack(idx) {
+    if (!this.tracks[idx]) return;
+    this.index = idx;
+    this._loadCurrent(true);
+    this._render();
+    this.renderPanel();
+  },
+
+  /** 切换当前曲目并播放 */
+  _loadCurrent(autoplay) {
+    const t = this.current();
+    if (!t) return;
+    if (this._isProcedural()) {
+      if (this.audio) { this.audio.pause(); this.audio.src = ''; }
+      if (autoplay && this.enabled) this._startProcedural();
+      return;
+    }
+    clearInterval(this._ptimer); this._ptimer = null;
+    if (!this.audio) {
+      const a = new Audio();
+      a.preload = 'auto';
+      a.addEventListener('ended', () => this.next());
+      a.addEventListener('error', () => this._skipBroken());
+      this.audio = a;
+    }
+    this.audio.volume = this.volume;
+    if (this.audio.src !== t.src) this.audio.src = t.src;
+    if (autoplay && this.enabled) {
+      this.started = true;
+      const p = this.audio.play();
+      if (p && p.catch) p.catch(() => { this._needsGesture = true; this._render(); });
+    }
+  },
+
+  _toast(msg) {
+    if (typeof UI !== 'undefined' && UI.toast) UI.toast(msg);
+  },
+
+  /* ---------------- 曲库面板 ---------------- */
+  openPanel() { this._panelOpen = true; this.renderPanel(); },
+  closePanel() { this._panelOpen = false; this.renderPanel(); },
+
+  renderPanel() {
+    let host = this._panel;
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'bgmPanel';
+      host.className = 'bgm-panel';
+      document.body.appendChild(host);
+      this._panel = host;
+    }
+    if (!this._panelOpen) { host.classList.remove('show'); host.innerHTML = ''; return; }
+    host.classList.add('show');
+    const items = this.tracks.map((t, i) => `
+      <div class="bp-item${i === this.index ? ' active' : ''}" data-i="${i}">
+        <span class="bp-play">${i === this.index && this.started && this.enabled ? '🔊' : '▶'}</span>
+        <span class="bp-info">
+          <span class="bp-name">${this._esc(t.title)}</span>
+          <span class="bp-meta">${this._esc(t.artist || '')}${t.persisted === false ? ' · 未持久化' : ''}</span>
+        </span>
+        ${t.user ? `<button class="bp-del" data-del="${i}" title="删除">✕</button>` : ''}
+      </div>`).join('');
+
+    host.innerHTML = `
+      <div class="bp-head">
+        <span>背景音乐</span>
+        <button class="bp-close" title="关闭">✕</button>
+      </div>
+      <div class="bp-list">${items || '<div class="bp-empty">曲库为空</div>'}</div>
+      <div class="bp-foot">
+        <button class="bp-add">＋ 添加音乐文件</button>
+        <input class="bp-file" type="file" accept="audio/*,.mp3,.ogg,.m4a,.wav,.flac" multiple hidden>
+      </div>
+      <div class="bp-hint">
+        支持 mp3 / ogg / m4a / wav；添加的曲目保存在浏览器本地（IndexedDB），刷新后仍在。
+        也可把文件放进 <code>assets/audio/</code>（命名 <code>widow-maker.mp3</code> 等）。
+      </div>`;
+
+    host.querySelector('.bp-close').addEventListener('click', () => this.closePanel());
+    const fileInput = host.querySelector('.bp-file');
+    host.querySelector('.bp-add').addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => { this.addFiles(fileInput.files); fileInput.value = ''; });
+    host.querySelectorAll('.bp-item').forEach(el => {
+      el.addEventListener('click', (ev) => {
+        if (ev.target.closest('.bp-del')) return;
+        this.selectTrack(Number(el.dataset.i));
+      });
+    });
+    host.querySelectorAll('.bp-del').forEach(el => {
+      el.addEventListener('click', (ev) => { ev.stopPropagation(); this.removeTrack(Number(el.dataset.del)); });
+    });
+  },
+
+  _esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  },
+
   play() {
     if (!this.enabled || !this.tracks.length) { this._render(); return; }
     if (this._isProcedural()) { this._startProcedural(); return; }
-    if (!this.audio) { this._render(); return; }
-    this.audio.volume = this.volume;
-    const p = this.audio.play();
-    if (p && p.catch) {
-      p.catch(() => { this._needsGesture = true; this._render(); });
-    }
-    this.started = true;
+    this._loadCurrent(true);
     this._render();
   },
 
@@ -329,19 +519,21 @@ const BGM = {
       <button class="bgm-btn bgm-main" data-bgm="toggle" title="${playing ? '暂停' : '播放'}">${playing ? '⏸' : '▶'}</button>
       <button class="bgm-btn" data-bgm="next" title="下一首">⏭</button>
       <div class="bgm-info">
-        <div class="bgm-title"><span class="bgm-note">🎵</span>${t ? t.title : ''}</div>
-        <div class="bgm-artist">${t ? t.artist : ''}</div>
+        <div class="bgm-title"><span class="bgm-note">🎵</span>${this._esc(t ? t.title : '')}</div>
+        <div class="bgm-artist">${this._esc(t ? t.artist : '')}</div>
       </div>
       <div class="bgm-vol">
         <span class="bgm-vol-ico">🔊</span>
         <input type="range" min="0" max="100" value="${Math.round(this.volume * 100)}" data-bgm="vol" title="音量">
-      </div>`;
+      </div>
+      <button class="bgm-btn bgm-list-btn" data-bgm="list" title="曲库 / 更换音乐">☰</button>`;
 
     el.querySelectorAll('[data-bgm]').forEach(node => {
       const act = node.dataset.bgm;
       if (act === 'toggle') node.addEventListener('click', () => this.toggle());
       else if (act === 'next') node.addEventListener('click', () => { this.next(); });
       else if (act === 'prev') node.addEventListener('click', () => { this.prev(); });
+      else if (act === 'list') node.addEventListener('click', (e) => { e.stopPropagation(); this._panelOpen ? this.closePanel() : this.openPanel(); });
       else if (act === 'vol') {
         node.addEventListener('input', () => this.setVolume(Number(node.value) / 100));
         node.addEventListener('click', (e) => e.stopPropagation());
