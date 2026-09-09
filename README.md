@@ -24,18 +24,31 @@
 
 打 tag（如 `git tag v1.0.0 && git push --tags`）时会自动发布到 **Releases** 供直接下载。
 
-本机构建（需 JDK 17 + Android SDK）：
+本机构建（需 JDK 17 + Android SDK + Gradle）。仓库提供两个脚本，**工具链全部装在项目 `.tools/` 内，不需要管理员权限、不污染系统**：
 
-```bash
-node scripts/prepare-www.js          # 把网页资源复制到 android-app/www
-cd android-app
-npm install
-npx cap add android
-npx @capacitor/assets generate --android --iconBackgroundColor "#0b0705" --splashBackgroundColor "#0b0705"
-npx cap sync android
-cd android && ./gradlew assembleDebug
-# 产物：android/app/build/outputs/apk/debug/app-debug.apk
+```powershell
+# 1) 下载并安装工具链（JDK 17 + Android SDK 组件，约 700 MB）
+powershell -ExecutionPolicy Bypass -File scripts\setup-android.ps1
+
+# 2) 一键编译（自动 prepare-www → cap add android → 生成图标 → gradle assembleDebug）
+powershell -ExecutionPolicy Bypass -File scripts\build-apk.ps1
+# 产物：项目根目录 gwent-android-debug.apk
 ```
+
+安装内容与来源（均为国内可达镜像，实测速度见括号）：
+
+| 组件 | 来源 | 体积 |
+|---|---|---|
+| OpenJDK 17.0.2 | `mirrors.huaweicloud.com/openjdk`（~4.4 MB/s） | 177 MB |
+| Android command-line tools | `dl.google.com/android/repository`（~8.4 MB/s） | 146 MB |
+| platform-tools / platforms;android-34 / build-tools;34.0.0 | 同上（sdkmanager 下载） | ~150 MB |
+| Gradle 8.2.1 | `mirrors.cloud.tencent.com/gradle`（~8.1 MB/s） | ~130 MB |
+
+> 脚本会自动把 `JAVA_HOME` / `ANDROID_HOME` / `ANDROID_USER_HOME` / `GRADLE_USER_HOME` / npm 缓存
+> 全部指向项目内目录 —— 这既避免写 C 盘，也让工具链可以随项目整体删除。
+> 图标由 `scripts/make-android-icons.js` 直接生成到 Android `res/mipmap-*`（不依赖 sharp）。
+
+如果不想在本地装工具链，用 GitHub Actions 云端编译（见上）。
 
 应用图标由 `scripts/make-icons.js` 纯代码生成（金色狼首徽章，与开场动画同一个图案）：
 `node scripts/make-icons.js` 可重新生成所有尺寸（含 Android 自适应图标的前景/背景层）。

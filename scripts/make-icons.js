@@ -51,8 +51,8 @@ function encodePNG(w, h, rgba) {
 }
 
 /* ---------------- 画布工具（超采样抗锯齿） ---------------- */
-function makeCanvas(size, ss) {
-  const W = size * ss, H = size * ss;
+function makeCanvas(w, h, ss) {
+  const W = Math.round(w * ss), H = Math.round(h * ss);
   const buf = new Float32Array(W * H * 4);   // 0..1 线性累加
   return {
     W, H, ss, buf,
@@ -154,7 +154,7 @@ function drawIcon(size, opt) {
   const scale = opt.scale == null ? 1 : opt.scale;
   const ringR = opt.ringR == null ? 0.437 : opt.ringR;
   const ss = 3;
-  const cv = makeCanvas(size, ss);
+  const cv = makeCanvas(size, size, ss);
   const S = size * ss;
   const P = (v) => v * S;
 
@@ -237,10 +237,17 @@ function drawIcon(size, opt) {
     fillCircle(cv, P(px), P(py), P(r * 0.45), '#fff0c8', ea * 0.9);
   }
 
-  return downsample(cv, size);
+  let rgba = downsample(cv, size);
+  // 圆形遮罩（用于 Android 圆形图标）
+  if (opt.round) {
+    const c = (size - 1) / 2;
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+      const dx = (x - c) / size, dy = (y - c) / size;
+      if (Math.sqrt(dx * dx + dy * dy) > 0.5) rgba[(y * size + x) * 4 + 3] = 0;
+    }
+  }
+  return rgba;
 }
-
-/** 计算不透明像素的最大半径（用于校验安全区） */
 function maxRadius(rgba, size) {
   let maxR = 0;
   const c = (size - 1) / 2;
@@ -252,6 +259,63 @@ function maxRadius(rgba, size) {
   }
   return maxR;
 }
+
+/** 启动图：深色渐变底 + 居中徽章（保持原图尺寸，供 Android splash 使用） */
+function drawSplash(w, h) {
+  const ss = 2;
+  const cv = makeCanvas(w, h, ss);
+  const W = cv.W, H = cv.H;
+  const P = (v) => v * Math.min(W, H);
+  // 背景
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const dx = (x / W - 0.5) * 2, dy = (y / H - 0.5) * 2;
+    const d = Math.min(1, Math.sqrt(dx * dx + dy * dy) / 1.3);
+    const k = Math.pow(1 - d, 1.5);
+    cv.set(x, y, 0.055 + 0.085 * k, 0.04 + 0.058 * k, 0.026 + 0.036 * k, 1);
+  }
+  const cx = W / 2, cy = H / 2;
+  const R = Math.min(W, H) * 0.26;
+  ringCircle(cv, cx, cy, R, R * 0.055, '#d9b56b', 1);
+  ringCircle(cv, cx, cy, R * 0.915, R * 0.018, '#f0d9a0', 0.55);
+  const s = (R * 1.7) / Math.min(W, H) / 0.9;      // 狼头相对比例
+  const sc = s * 0.9;
+  const T = (x, y) => [cx + (x - 0.5) * Math.min(W, H) * sc, cy + (y - 0.485) * Math.min(W, H) * sc];
+  const earL = [T(0.318, 0.150), T(0.412, 0.330), T(0.318, 0.400)];
+  const earR = [T(0.682, 0.150), T(0.588, 0.330), T(0.682, 0.400)];
+  const head = [T(0.302, 0.332), T(0.698, 0.332), T(0.648, 0.520), T(0.572, 0.648), T(0.500, 0.782), T(0.428, 0.648), T(0.352, 0.520)];
+  const eyeL = [T(0.398, 0.452), T(0.470, 0.468), T(0.466, 0.496), T(0.392, 0.480)];
+  const eyeR = eyeL.map(([x, y]) => [2 * cx - x, y]);
+  fillPoly(cv, earL, '#e8cd93', 1);
+  fillPoly(cv, earR, '#e8cd93', 1);
+  fillPoly(cv, head, '#e8cd93', 1);
+  fillPoly(cv, [T(0.332, 0.196), T(0.396, 0.330), T(0.338, 0.372)], '#3a2410', 0.85);
+  fillPoly(cv, [T(0.668, 0.196), T(0.604, 0.330), T(0.662, 0.372)], '#3a2410', 0.85);
+  fillPoly(cv, [T(0.432, 0.548), T(0.568, 0.548), T(0.500, 0.760)], '#c9a35c', 0.85);
+  fillPoly(cv, [T(0.470, 0.556), T(0.530, 0.556), T(0.500, 0.618)], '#2a1a0a', 0.95);
+  fillPoly(cv, eyeL, '#ffd24a', 1);
+  fillPoly(cv, eyeR, '#ffd24a', 1);
+  // 降采样（非方形）
+  const out = Buffer.alloc(w * h * 4);
+  const n = cv.ss * cv.ss;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let r = 0, g = 0, b = 0, a = 0;
+    for (let dy = 0; dy < cv.ss; dy++) for (let dx = 0; dx < cv.ss; dx++) {
+      const i = ((y * cv.ss + dy) * cv.W + (x * cv.ss + dx)) * 4;
+      r += cv.buf[i]; g += cv.buf[i + 1]; b += cv.buf[i + 2]; a += cv.buf[i + 3];
+    }
+    const o = (y * w + x) * 4;
+    out[o] = Math.round(Math.min(1, r / n) * 255);
+    out[o + 1] = Math.round(Math.min(1, g / n) * 255);
+    out[o + 2] = Math.round(Math.min(1, b / n) * 255);
+    out[o + 3] = Math.round(Math.min(1, a / n) * 255);
+  }
+  return out;
+}
+
+module.exports = { drawIcon, drawSplash, encodePNG, maxRadius, ROOT };
+
+/* ---------------- 输出（仅直接运行时执行） ---------------- */
+if (require.main !== module) return;
 
 /* ---------------- 输出 ---------------- */
 const outDir = path.join(ROOT, 'icons');
