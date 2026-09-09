@@ -946,6 +946,48 @@ button.primary {
 }
 
 /* ============================================================
+ *  卡组编辑器：整体不超屏，只有卡池区域滚动（按钮始终可见）
+ * ============================================================ */
+.modal.deck-modal {
+  display: flex;
+  flex-direction: column;
+  max-height: 92vh;
+  overflow: hidden;                 /* 内部各区自行滚动 */
+  gap: 10px;
+}
+.deck-head, .deck-leaders, .deck-filters, .deck-foot { flex: 0 0 auto; }
+.deck-body { flex: 1 1 auto; min-height: 0; display: flex; }
+.pool-grid {
+  flex: 1 1 auto;
+  max-height: none;                 /* 高度由 .deck-body 决定 */
+  overflow-y: auto;
+  align-content: start;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 6px;
+}
+.pool-card .card { height: 98px; }
+.pool-grid::-webkit-scrollbar { width: 10px; }
+.pool-grid::-webkit-scrollbar-track { background: rgba(0,0,0,.32); border-radius: 5px; }
+.pool-grid::-webkit-scrollbar-thumb { background: var(--line2); border-radius: 5px; }
+.pool-grid::-webkit-scrollbar-thumb:hover { background: var(--gold-dim); }
+
+@media (max-width: 640px) {
+  .modal.deck-modal { max-height: 96vh; gap: 7px; padding: 10px; }
+  .pool-grid { grid-template-columns: repeat(auto-fill, minmax(62px, 1fr)); gap: 5px; }
+  .pool-card .card { height: 84px; }
+  .deck-leaders { max-height: 96px; overflow-y: auto; padding-bottom: 2px; }
+  .deck-filters { flex-wrap: wrap; }
+}
+
+@media (orientation: landscape) and (max-height: 600px), (max-height: 480px) {
+  .modal.deck-modal { max-height: 97vh; gap: 5px; padding: 7px 9px; }
+  .deck-leaders { max-height: 76px; overflow-y: auto; }
+  .pool-grid { grid-template-columns: repeat(auto-fill, minmax(54px, 1fr)); gap: 4px; }
+  .pool-card .card { height: 72px; }
+  .deck-foot { gap: 8px; }
+}
+
+/* ============================================================
  *  手机端适配（≤ 640px）
  * ============================================================ */
 /* 允许纵向滚动（原基础样式 body{overflow:hidden} 会把底部手牌裁掉） */
