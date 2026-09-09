@@ -142,6 +142,26 @@ function matchesSelector(node, sel) {
 }
 
 function matchesSimple(node, s) {
+  s = String(s);
+  // 属性选择器：[attr] / [attr="value"] / [attr='value']
+  const attrRe = /\[([\w-]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\]\s]+)))?\]/g;
+  let am;
+  while ((am = attrRe.exec(s))) {
+    const name = am[1];
+    const want = am[2] != null ? am[2] : (am[3] != null ? am[3] : (am[4] != null ? am[4] : undefined));
+    let actual;
+    if (name.startsWith('data-')) {
+      actual = node.dataset[name.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())];
+    } else {
+      actual = node._attrs[name];
+      if (actual == null && name === 'id') actual = node._id;
+      if (actual == null && name === 'class') actual = node.className;
+    }
+    if (actual == null) return false;
+    if (want !== undefined && String(actual) !== want) return false;
+  }
+  s = s.replace(/\[[^\]]*\]/g, '').trim();
+  if (!s) return true;
   const idM = s.match(/#([\w-]+)/);
   const clsM = [...s.matchAll(/\.([\w-]+)/g)].map(m => m[1]);
   const tagM = s.match(/^([a-zA-Z][\w-]*)/);

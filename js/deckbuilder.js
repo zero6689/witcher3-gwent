@@ -31,10 +31,11 @@ const DeckBuilder = {
   },
 
   /* ---------- 打开编辑器 ---------- */
-  open(factionKey, difficultyKey, onStart) {
+  open(factionKey, difficultyKey, onStart, configOnly) {
     this.faction = factionKey;
     this.difficulty = difficultyKey || 'normal';
     this.onStart = onStart;
+    this.configOnly = !!configOnly;
     const saved = this.load(factionKey);
     if (saved) {
       this.leaderId = saved.leaderId;
@@ -114,8 +115,28 @@ const DeckBuilder = {
       return `<div class="pool-card${cur ? ' chosen' : ''}${full ? ' full' : ''}" data-def="${d.id}" title="${d.zh}${d.desc ? ' · ' + d.desc : ''}">
         ${cardHtml(Object.assign({}, d, { faction: d.faction, type: d.t, power: d.p }))}
         <div class="pool-badge">${cur}/${max}</div>
+        <div class="pool-ctrl">
+          <button class="pc-btn" data-minus="${d.id}" title="减少一张">−</button>
+          <button class="pc-btn" data-plus="${d.id}" title="增加一张">+</button>
+        </div>
       </div>`;
     };
+
+    // 牌组概览（左下角卡组数量 + 卡组效果统计）
+    const summary = (() => {
+      let heroes = 0, spies = 0, medics = 0, musters = 0, bonds = 0, power = 0;
+      for (const [defId, n] of Object.entries(this.picks)) {
+        const d = ALL_CARDS[defId];
+        if (!d || !n) continue;
+        if (d.t === 'hero') heroes += n;
+        if ((d.ab || []).includes('spy')) spies += n;
+        if ((d.ab || []).includes('medic')) medics += n;
+        if ((d.ab || []).includes('muster')) musters += n;
+        if ((d.ab || []).includes('tight_bond')) bonds += n;
+        if (d.t !== 'special') power += (d.p || 0) * n;
+      }
+      return { heroes, spies, medics, musters, bonds, power };
+    })();
 
     ov.classList.remove('hidden');
     ov.innerHTML = `
@@ -153,13 +174,26 @@ const DeckBuilder = {
         </div>
 
         <div class="deck-foot">
-          <div class="deck-msg">${st.ok ? '<span class="ok">✅ 卡组合法，可以开战</span>' : `<span class="err">${st.errors[0]}</span>`}</div>
+          <div class="deck-msg">
+            ${st.ok ? '<span class="ok">✅ 卡组合法</span>' : `<span class="err">${st.errors[0]}</span>`}
+            <span class="deck-summary">总战力 ${summary.power} · 英雄 ${summary.heroes} · 间谍 ${summary.spies} · 医生 ${summary.medics} · 召唤 ${summary.musters} · 同袍 ${summary.bonds}</span>
+          </div>
           <div class="deck-actions">
-            <button class="chip" data-act="back">返回阵营选择</button>
-            <button class="primary" data-act="start" ${st.ok ? '' : 'disabled'}>开始对战（${DIFFICULTIES[this.difficulty].zh}）</button>
+            <button class="chip" data-act="back">返回</button>
+            <button class="primary" data-act="start" ${st.ok ? '' : 'disabled'}>
+              ${this.configOnly ? '保存并返回' : `开始对战（${DIFFICULTIES[this.difficulty].zh}）`}
+            </button>
           </div>
         </div>
       </div>`;
+
+    // +/- 按钮（不冒泡到卡牌点击）
+    ov.querySelectorAll('[data-plus]').forEach(el => {
+      el.addEventListener('click', (ev) => { ev.stopPropagation(); this.add(el.dataset.plus); });
+    });
+    ov.querySelectorAll('[data-minus]').forEach(el => {
+      el.addEventListener('click', (ev) => { ev.stopPropagation(); this.remove(el.dataset.minus); });
+    });
 
     // 事件绑定
     ov.querySelectorAll('.pool-card').forEach(el => {
@@ -180,7 +214,10 @@ const DeckBuilder = {
       el.addEventListener('click', () => {
         if (act === 'auto') this.fillAuto();
         else if (act === 'clear') this.clearAll();
-        else if (act === 'back') showFactionSelect();
+        else if (act === 'back') {
+          if (this.configOnly) showMainMenu();
+          else showFactionSelect('play');
+        }
         else if (act === 'start') this.start();
       });
     });

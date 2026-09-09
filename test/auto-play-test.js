@@ -34,7 +34,8 @@ const ok = (m) => console.log('✅ ' + m);
 const bad = (m) => { fail++; console.log('❌ ' + m); };
 const assert = (c, m) => { if (!c) throw new Error(m); };
 
-/* 开局：北方 + 普通 + 一键填充 + 不换牌 */
+/* 开局：主菜单 → 北方 + 普通 + 一键填充 + 不换牌 */
+fire(doc.getElementById('overlay').querySelectorAll('[data-mm]').find(e => e.dataset.mm === 'play'), 'click');
 fire(doc.getElementById('overlay').querySelectorAll('.fc').find(e => e.dataset.fac === 'northern'), 'click');
 fire(doc.getElementById('overlay').querySelectorAll('.diff-card').find(e => e.dataset.diff === 'normal'), 'click');
 fire(doc.getElementById('overlay').querySelectorAll('[data-act]').find(e => e.dataset.act === 'auto'), 'click');

@@ -45,8 +45,10 @@ else ok(`DOM id 全部可解析（静态 ${htmlIds.size} 个，引用 ${usedIds.
 // ---------- 3) 跨文件全局符号 ----------
 const ctx = { console, Math, JSON, Object, Array, String, Number, Boolean, Date, Set, Map, RegExp, Error, isNaN, parseInt, parseFloat };
 ctx.globalThis = ctx;
-ctx.window = { AudioContext: undefined, webkitAudioContext: undefined };
+ctx.window = { AudioContext: undefined, webkitAudioContext: undefined, addEventListener: () => {} };
 ctx.localStorage = { getItem: () => null, setItem: () => {} };
+ctx.document = { addEventListener: () => {}, createElement: () => ({ style: {}, classList: { add() {}, remove() {} }, appendChild() {} }), body: { appendChild() {} } };
+ctx.fetch = () => Promise.reject(new Error('no fetch'));
 vm.createContext(ctx);
 try {
   for (const s of scripts) {

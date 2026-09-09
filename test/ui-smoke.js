@@ -58,13 +58,19 @@ try {
 }
 
 /* ---------------- 流程断言 ---------------- */
-check('① 开局渲染阵营选择弹窗（4 阵营）', () => {
+check('① 开局渲染主菜单（4 个按钮）', () => {
   const ov = doc.getElementById('overlay');
   assert(ov && !ov._class.has('hidden'), 'overlay 应可见');
-  assert(ov.querySelectorAll('.fc').length === 4, `阵营数 ${ov.querySelectorAll('.fc').length}`);
+  assert(ov.querySelectorAll('[data-mm]').length === 4, `主菜单按钮数 ${ov.querySelectorAll('[data-mm]').length}`);
+  assert(ov.querySelectorAll('.mm-crest').length === 4, '主菜单应有 4 个阵营盾徽');
 });
 
-check('② 选阵营 → 难度选择（4 档）', () => {
+check('② 点「开始游戏」→ 阵营选择（4 阵营）', () => {
+  fire(doc.getElementById('overlay').querySelectorAll('[data-mm]').find(e => e.dataset.mm === 'play'), 'click');
+  assert(doc.getElementById('overlay').querySelectorAll('.fc').length === 4, '阵营数应为 4');
+});
+
+check('③ 选阵营 → 难度选择（4 档）', () => {
   const fc = doc.getElementById('overlay').querySelectorAll('.fc').find(e => e.dataset.fac === 'northern');
   assert(fc, '未找到北方领域');
   fire(fc, 'click');
@@ -72,7 +78,7 @@ check('② 选阵营 → 难度选择（4 档）', () => {
   assert(diffs.length === 4, `难度档数 ${diffs.length}`);
 });
 
-check('③ 选「困难」→ 进入卡组编辑器（卡池带本地卡面）', () => {
+check('④ 选「困难」→ 进入卡组编辑器（卡池带本地卡面）', () => {
   const d = doc.getElementById('overlay').querySelectorAll('.diff-card').find(e => e.dataset.diff === 'hard');
   fire(d, 'click');
   const ov = doc.getElementById('overlay');
@@ -91,7 +97,7 @@ check('③ 选「困难」→ 进入卡组编辑器（卡池带本地卡面）',
   assert(st.ok, '默认牌组应合法：' + st.errors.join('; '));
 });
 
-check('④ 点卡加牌 / 右键减牌 + 上限校验', () => {
+check('⑤ 点卡加牌 / 右键减牌 + 上限校验', () => {
   const ov = doc.getElementById('overlay');
   const first = ov.querySelectorAll('.pool-card')[0];
   const defId = first.dataset.def;
@@ -106,7 +112,7 @@ check('④ 点卡加牌 / 右键减牌 + 上限校验', () => {
   assert(st.unitCount <= 40, `自动填充后单位超编 ${st.unitCount}`);
 });
 
-check('⑤ 非法牌组时开始按钮禁用', () => {
+check('⑥ 非法牌组时开始按钮禁用', () => {
   evalIn('DeckBuilder.picks = {}; DeckBuilder.render()');
   const ov = doc.getElementById('overlay');
   const start = ov.querySelectorAll('[data-act]').find(e => e.dataset.act === 'start');
@@ -114,7 +120,7 @@ check('⑤ 非法牌组时开始按钮禁用', () => {
   assert(/不足/.test(ov.querySelector('.deck-msg').textContent), '应提示单位牌不足');
 });
 
-check('⑥ 一键填充 → 开始对战 → 换牌界面', () => {
+check('⑦ 一键填充 → 开始对战 → 换牌界面', () => {
   const ov = doc.getElementById('overlay');
   fire(ov.querySelectorAll('[data-act]').find(e => e.dataset.act === 'auto'), 'click');
   assert(evalIn('DeckBuilder.stats().ok'), '一键填充后应合法');
@@ -124,7 +130,7 @@ check('⑥ 一键填充 → 开始对战 → 换牌界面', () => {
 });
 
 let g = null;
-check('⑦ 开始游戏 → 牌桌渲染', () => {
+check('⑧ 开始游戏 → 牌桌渲染', () => {
   fire(doc.getElementById('mullNone'), 'click');
   g = evalIn('game');
   assert(g, '全局 game 未创建');
@@ -135,7 +141,7 @@ check('⑦ 开始游戏 → 牌桌渲染', () => {
   assert(doc.getElementById('playerHand').querySelectorAll('.card').length === g.side.player.hand.length, '手牌数量不符');
 });
 
-check('⑧ 卡面原画（本地文件）+ 音效开关按钮', () => {
+check('⑨ 卡面原画（本地文件）+ 音效开关按钮', () => {
   const withArt = doc.querySelectorAll('.card .art').filter(a => String(a.style.backgroundImage || '').includes('assets/cards'));
   assert(withArt.length > 0, '没有卡面挂载本地原画');
   const btns = doc.getElementById('actionButtons').querySelectorAll('button');
@@ -200,13 +206,13 @@ check('⑧ 卡面原画（本地文件）+ 音效开关按钮', () => {
 
   const sounds = (() => { try { return evalIn('globalThis.__sounds || []'); } catch (e) { return []; } })();
 
-  check('⑨ 整局对战在 UI 层跑完（困难 AI）', () => {
+  check('⑩ 整局对战在 UI 层跑完（困难 AI）', () => {
     assert(g.over, `未结束（steps=${steps}, round=${g.round}）`);
   });
-  check('⑩ 音效事件被触发', () => {
+  check('⑪ 音效事件被触发', () => {
     assert(sounds.length > 0, '没有触发任何音效');
   });
-  check('⑪ 渲染路径无异常', () => {
+  check('⑫ 渲染路径无异常', () => {
     assert(errors.length === 0, '捕获异常：\n    ' + errors.slice(0, 6).join('\n    '));
   });
 
@@ -221,3 +227,4 @@ check('⑧ 卡面原画（本地文件）+ 音效开关按钮', () => {
   if (errors.length) { console.log('\n异常：'); errors.slice(0, 10).forEach(e => console.log('  - ' + e)); }
   process.exit(fail ? 1 : 0);
 })();
+

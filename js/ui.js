@@ -252,51 +252,45 @@ const UI = {
   /* 场上小卡 */
   _boardCard(c, sideName, row) {
     const div = document.createElement('div');
-    div.className = 'card small' + (c.type === 'hero' ? ' hero' : '') + (c.used ? ' special-card' : '');
+    div.className = 'card small' + (c.type === 'hero' ? ' hero' : '') + (c.used ? ' special-card' : '') + (c.spied ? ' spied' : '');
     if (this._prevUids && !this._prevUids.has(c.uid)) div.classList.add('enter');
     div.dataset.uid = c.uid;
     div.dataset.side = sideName;
     div.dataset.row = row;
     div.dataset.spy = c.spied ? '1' : '';
-    const art = document.createElement('div');
-    art.className = 'art';
-    if (c.art) art.style.backgroundImage = `url('${c.art}')`;
-    else art.style.background = 'linear-gradient(145deg,#33302a,#17150f)';
-    div.appendChild(art);
-    if (c.type !== 'special' || c.kind === 'decoy') {
-      const pow = document.createElement('div');
-      pow.className = 'power';
-      pow.textContent = c._effective != null ? c._effective : (c.power || 0);
-      div.appendChild(pow);
-    }
-    if (c.type === 'special') {
-      const tag = document.createElement('div');
-      tag.className = 'tag';
-      tag.textContent = c.icon || '';
-      div.appendChild(tag);
-    } else {
-      const tag = document.createElement('div');
-      tag.className = 'tag';
-      tag.textContent = this._abilityIcon(c);
-      div.appendChild(tag);
-    }
-    const name = document.createElement('div');
-    name.className = 'name';
-    name.textContent = c.name.zh;
-    div.appendChild(name);
-    if (c.spied) {
-      const rowIco = document.createElement('div');
-      rowIco.className = 'rowico';
-      rowIco.textContent = '🕵️';
-      div.appendChild(rowIco);
-      div.classList.add('spied');
-    }
+    // 卡面结构：原画 / 阵营竖条 / 战力圆徽 / 技能圆徽 / 名字带
+    div.innerHTML = cardFaceHtml(c, {
+      power: c._effective != null ? c._effective : (c.power || 0),
+      badges: cardBadges(c).concat(c.spied ? [{ icon: '🕵', cls: 'spy', title: '间谍（在对方场上）' }] : []),
+    });
+    div._card = c;
+    this._bindPreview(div, c);
     // 诱饵/收回目标：允许点击
     if (this.targetMode === 'decoy' && sideName === 'player' && c.type !== 'hero' && !c.spied) {
       div.classList.add('playable');
       div.addEventListener('click', (ev) => { ev.stopPropagation(); this.onDecoyTarget(c.uid); });
     }
     return div;
+  },
+
+  /* ---------------- 悬停放大预览（右侧卡槽） ---------------- */
+  _bindPreview(el, card) {
+    el.addEventListener('mouseenter', () => this.showPreview(card));
+    el.addEventListener('mouseleave', () => this.hidePreview());
+  },
+
+  showPreview(card) {
+    const host = this.el('cardPreview');
+    if (!host) return;
+    const type = card.type || card.t;
+    host.className = 'card-preview' + (type === 'hero' ? ' hero' : '') + (type === 'special' ? ' special-card' : '');
+    host.innerHTML = cardFaceHtml(card, { power: card._effective != null ? card._effective : undefined });
+    host.classList.add('show');
+  },
+
+  hidePreview() {
+    const host = this.el('cardPreview');
+    if (host) host.classList.remove('show');
   },
 
   _abilityIcon(c) {
@@ -329,36 +323,9 @@ const UI = {
       d.className = cls;
       if (this._prevHand && !this._prevHand.has(c.uid)) d.classList.add('enter');
       d.dataset.index = i;
-      const art = document.createElement('div');
-      art.className = 'art';
-      if (c.art) art.style.backgroundImage = `url('${c.art}')`;
-      else art.style.background = this._placeholderArt(c);
-      d.appendChild(art);
-      if (c.type !== 'special') {
-        const pow = document.createElement('div');
-        pow.className = 'power';
-        pow.textContent = c.power || 0;
-        d.appendChild(pow);
-      } else {
-        const tag = document.createElement('div');
-        tag.className = 'tag';
-        tag.textContent = c.icon || '✨';
-        d.appendChild(tag);
-      }
-      const tag = document.createElement('div');
-      tag.className = 'tag';
-      tag.textContent = (c.type === 'hero' ? '👑' : '') + (c.type !== 'special' && c.ability && c.ability !== 'agile' ? this._abilityIcon(c) : '');
-      // 若已有 tag 则不再加（特殊牌 icon 已放）
-      if (c.type !== 'special') {
-        const t2 = document.createElement('div');
-        t2.className = 'tag';
-        t2.textContent = this._abilityIcon(c) === '' ? '' : this._abilityIcon(c);
-        if (t2.textContent) d.appendChild(t2);
-      }
-      const name = document.createElement('div');
-      name.className = 'name';
-      name.textContent = c.name.zh + (c.desc && c.desc.length > 14 ? '' : (c.desc ? ' · ' + c.desc : ''));
-      d.title = `${c.name.zh} (${c.name.en})${c.desc ? '\n' + c.desc : ''}\n${c.type === 'hero' ? '英雄：免疫天气/号角/焚风/诱饵/医生' : (c.row === 'agile' ? '可放近战或远程' : '可放' + ROW_CN[c.row])}`;
+      d.innerHTML = cardFaceHtml(c, { power: c.power != null ? c.power : 0 });
+      d._card = c;
+      this._bindPreview(d, c);
       d.title = c.desc ? `${c.name.zh}：${c.desc}` : c.name.zh;
       d.addEventListener('click', () => this.onHandClick(i));
       hand.appendChild(d);
