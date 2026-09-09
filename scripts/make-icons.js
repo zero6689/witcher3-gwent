@@ -222,18 +222,35 @@ function drawIcon(size, opt) {
   fillPoly(cv, eyeL, '#ffd24a', 1);
   fillPoly(cv, eyeR, '#ffd24a', 1);
 
-  // 余烬：放大提亮，位置分布在下环两侧 + 上方一颗
+  // 余烬：放大提亮；emberR 可把位置向中心收缩（自适应前景要留在安全区内）
+  const erScale = opt.emberR == null ? 1 : opt.emberR;
   const embers = [
     [0.215, 0.760, 0.017, 0.95], [0.785, 0.735, 0.015, 0.95],
     [0.330, 0.885, 0.013, 0.85], [0.672, 0.890, 0.012, 0.85],
     [0.500, 0.155, 0.014, 0.9],
   ];
   for (const [ex, ey, er, ea] of embers) {
-    fillCircle(cv, P(ex), P(ey), P(er * (0.6 + 0.4 * scale)), '#ffb45a', ea);
-    fillCircle(cv, P(ex), P(ey), P(er * 0.45 * (0.6 + 0.4 * scale)), '#fff0c8', ea * 0.9);
+    const px = 0.5 + (ex - 0.5) * erScale;
+    const py = 0.5 + (ey - 0.5) * erScale;
+    const r = er * (0.6 + 0.4 * scale);
+    fillCircle(cv, P(px), P(py), P(r), '#ffb45a', ea);
+    fillCircle(cv, P(px), P(py), P(r * 0.45), '#fff0c8', ea * 0.9);
   }
 
   return downsample(cv, size);
+}
+
+/** 计算不透明像素的最大半径（用于校验安全区） */
+function maxRadius(rgba, size) {
+  let maxR = 0;
+  const c = (size - 1) / 2;
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    if (rgba[(y * size + x) * 4 + 3] > 16) {
+      const dx = (x - c) / size, dy = (y - c) / size;
+      maxR = Math.max(maxR, Math.sqrt(dx * dx + dy * dy));
+    }
+  }
+  return maxR;
 }
 
 /* ---------------- 输出 ---------------- */
@@ -243,18 +260,18 @@ fs.mkdirSync(outDir, { recursive: true });
 fs.mkdirSync(andDir, { recursive: true });
 
 const targets = [
-  // PWA / 网页图标：完整金环 + 狼头（头缩小到 0.9，下巴不再顶环）
+  // PWA / 网页图标：完整金环 + 狼头
   ['icons/icon-192.png', 192, { scale: 0.9, ringR: 0.437 }],
   ['icons/icon-512.png', 512, { scale: 0.9, ringR: 0.437 }],
   ['icons/apple-touch-icon.png', 180, { scale: 0.9, ringR: 0.437 }],
   ['icons/favicon-32.png', 32, { scale: 0.98, ringR: 0.42, ringW: 1.7 }],
-  // maskable：内容收进安全区（半径 ≤ 0.4）
-  ['icons/icon-maskable-512.png', 512, { scale: 0.72, ringR: 0.355 }],
-  // Android 自适应图标：前景层带金环（半径 0.30，落在 66% 安全区内），背景层只有渐变
+  // maskable：内容全部收进 80% 直径安全圆（半径 ≤ 0.4）
+  ['icons/icon-maskable-512.png', 512, { scale: 0.66, ringR: 0.33, emberR: 0.6 }],
+  // Android 自适应图标：前景层金环半径 0.30 + 余烬内收，整体落在 66% 安全圆内；背景层只有渐变
   ['android-app/assets/icon-only.png', 1024, { scale: 0.9, ringR: 0.437 }],
-  ['android-app/assets/icon-foreground.png', 1024, { scale: 0.55, ringR: 0.30, transparent: true }],
+  ['android-app/assets/icon-foreground.png', 1024, { scale: 0.55, ringR: 0.30, transparent: true, emberR: 0.34 }],
   ['android-app/assets/icon-background.png', 1024, { bgOnly: true }],
-  ['android-app/assets/splash.png', 2732, { scale: 0.42, ringR: 0.24, transparent: true }],
+  ['android-app/assets/splash.png', 2732, { scale: 0.42, ringR: 0.24, transparent: true, emberR: 0.5 }],
 ];
 
 for (const [rel, size, opt] of targets) {
@@ -263,6 +280,8 @@ for (const [rel, size, opt] of targets) {
   const rgba = drawIcon(size, opt);
   const png = encodePNG(size, size, rgba);
   fs.writeFileSync(file, png);
-  console.log(`${rel.padEnd(42)} ${size}×${size}  ${(png.length / 1024).toFixed(1)} KB`);
+  const r = maxRadius(rgba, size);
+  const zone = opt.transparent ? `  最大半径 ${r.toFixed(3)}${r <= 0.34 ? ' ✅安全' : (r <= 0.4 ? ' ⚠️超66%但在80%内' : ' ❌超安全区')}` : '';
+  console.log(`${rel.padEnd(42)} ${size}×${size}  ${(png.length / 1024).toFixed(1)} KB${zone}`);
 }
 console.log('\n图标生成完成。');
