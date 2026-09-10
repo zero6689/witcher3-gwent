@@ -58,17 +58,22 @@ const BGM = {
     } catch (e) { /* ignore */ }
   },
 
-  /* ---------------- 探测可用音频 + 读取用户曲库 ---------------- */
+  /* ---------------- 探测可用音频 + 读取用户曲库（并行，避免串行等待） ---------------- */
   async _probe() {
-    const found = [];
-    for (const c of this.candidates) {
-      for (const ext of this.exts) {
+    // 4 首候选 × 4 种扩展名 = 16 个 HEAD 请求，全部并行发出（原来串行会阻塞启动 1-3 秒）
+    const probes = await Promise.all(this.candidates.flatMap((c, ci) =>
+      this.exts.map(async (ext, ei) => {
         const src = this.baseDir + c.file + '.' + ext;
-        if (await this._exists(src)) {
-          found.push({ title: c.title, artist: c.artist, src });
-          break;
-        }
-      }
+        return (await this._exists(src)) ? { ci, ei, title: c.title, artist: c.artist, src } : null;
+      })
+    ));
+    const hits = probes.filter(Boolean).sort((a, b) => a.ci - b.ci || a.ei - b.ei);
+    const found = [];
+    const seen = new Set();
+    for (const h of hits) {
+      if (seen.has(h.ci)) continue;
+      seen.add(h.ci);
+      found.push({ title: h.title, artist: h.artist, src: h.src });
     }
     // 用户自己添加的曲目（IndexedDB 持久保存）
     const mine = await this._idbAll();

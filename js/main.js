@@ -146,6 +146,8 @@ function showDifficultySelect(facKey) {
     });
   });
   document.getElementById('backFac').addEventListener('click', () => showFactionSelect('play'));
+  // 用户正在挑难度 —— 这段时间把本阵营卡池（≈60 张）立刻抢跑出来，进编辑器即出图
+  warmCardArt(factionArtList(facKey), true);
 }
 
 /* ---------------- 3. 卡组编辑 → 开战 / 保存 ---------------- */
@@ -357,20 +359,22 @@ function cardBadges(c) {
   return out;
 }
 
-/** .card 的内部结构（art / 阵营竖条 / 战力圆徽 / 技能圆徽 / 名字带） */
+/** .card 的内部结构（art / 阵营竖条 / 战力圆徽 / 技能圆徽 / 名字带）
+ *  opts.eager = true 时立即加载图片；默认懒加载（卡组编辑器一次渲染 143 张，必须懒加载）
+ */
 function cardFaceHtml(c, opts) {
   opts = opts || {};
   const fac = FACTIONS[c.faction] || FACTIONS.neutral;
   const type = c.type || c.t;
   const zh = c.name ? c.name.zh : (c.zh || c.en || '');
   const art = c.art
-    ? `background-image:url('${c.art}')`
-    : `background:linear-gradient(150deg,${fac.color1},${fac.color2})`;
+    ? `<img class="art" src="${c.art}" alt="" loading="${opts.eager ? 'eager' : 'lazy'}" decoding="async">`
+    : `<div class="art" style="background:linear-gradient(150deg,${fac.color1},${fac.color2})"></div>`;
   const power = opts.power != null ? opts.power : (c.power != null ? c.power : (c.p != null ? c.p : 0));
   const bar = FACTION_BAR[c.faction] || FACTION_BAR.neutral;
   const badges = (opts.badges || cardBadges(c))
     .map(b => `<span class="cbadge ${b.cls || ''}" title="${b.title || ''}">${b.icon}</span>`).join('');
-  return `<div class="art" style="${art}"></div>
+  return `${art}
     <span class="faction-bar" style="background:${bar}"></span>
     ${type !== 'special' ? `<div class="power">${power}</div>` : `<div class="tag">${c.icon || ''}</div>`}
     ${badges ? `<div class="abilities">${badges}</div>` : ''}
@@ -382,6 +386,81 @@ function cardHtml(c, opts) {
   const type = c.type || c.t;
   const cls = 'card' + (type === 'hero' ? ' hero' : '') + (type === 'special' ? ' special-card' : '');
   return `<div class="${cls}">${cardFaceHtml(c, opts)}</div>`;
+}
+
+/* ---------------- 卡面预热 ----------------
+ * 卡池一次渲染上百张图，如果等用户点进去才发请求，首屏就会「一张张慢慢冒出来」。
+ * 这里在空闲时段分批预取全部卡面（每批 6 张），浏览器缓存 + Service Worker 都会命中，
+ * 之后打开卡组编辑器/牌桌基本都是瞬时出图。
+ * 省流保护：saveData 或 2G 网络时完全不预热。
+ */
+const _artWarmed = new Set();
+let _warmQueue = [];
+let _warmScheduled = false;
+
+function _prefetchArt(url) {
+  if (typeof Image === 'undefined') return;
+  const img = new Image();
+  img.decoding = 'async';
+  try { img.fetchPriority = 'low'; } catch (e) { /* 老浏览器忽略 */ }   // 预热让位于正在渲染的卡面
+  img.src = url;
+  if (img.decode) { img.decode().catch(() => {}); }
+}
+
+function _warmAllowed() {
+  try {
+    const c = navigator.connection;
+    if (!c) return true;
+    if (c.saveData) return false;
+    if (/^2g$|slow-2g/.test(c.effectiveType || '')) return false;
+  } catch (e) { /* ignore */ }
+  return true;
+}
+
+function _runWarmQueue() {
+  _warmScheduled = false;
+  const slice = _warmQueue.splice(0, 4);          // 一次 4 张，避免和「正在渲染的卡面」抢带宽
+  slice.forEach(_prefetchArt);
+  if (_warmQueue.length) setTimeout(_scheduleWarm, 150);
+}
+
+function _scheduleWarm() {
+  if (_warmScheduled || !_warmQueue.length) return;
+  _warmScheduled = true;
+  if (typeof window.requestIdleCallback === 'function') {
+    window.requestIdleCallback(() => _runWarmQueue(), { timeout: 500 });
+  } else {
+    setTimeout(_runWarmQueue, 120);
+  }
+}
+
+/** 把若干卡面加入后台预取队列；list 省略则预热全部卡（含领袖）；now=true 则立刻并发预取 */
+function warmCardArt(list, now) {
+  if (!_warmAllowed()) return;
+  const urls = [];
+  const push = (u) => { if (u && !_artWarmed.has(u)) { _artWarmed.add(u); urls.push(u); } };
+  if (list) (list || []).forEach(c => push(c && c.art));
+  else {
+    const all = typeof ALL_CARDS !== 'undefined' ? ALL_CARDS : null;
+    if (all) Object.keys(all).forEach(k => push(all[k] && all[k].art));
+    const ls = typeof LEADERS !== 'undefined' ? LEADERS : null;
+    if (ls) Object.keys(ls).forEach(k => (ls[k] || []).forEach(l => push(l && l.art)));
+  }
+  if (!urls.length) return;
+  if (now) { urls.forEach(_prefetchArt); return; }
+  _warmQueue = _warmQueue.concat(urls);
+  _scheduleWarm();
+}
+
+/** 某个阵营即将用到的卡池（该阵营 + 中立 + 特殊牌 + 4 张领袖），用于进入卡组编辑器前抢跑 */
+function factionArtList(facKey) {
+  const out = [];
+  if (typeof LEADERS !== 'undefined' && LEADERS[facKey]) out.push(...LEADERS[facKey]);
+  const ids = [];
+  if (typeof CARDS !== 'undefined' && CARDS[facKey]) ids.push(...CARDS[facKey]);
+  if (typeof CARDS !== 'undefined') ids.push(...(CARDS.neutral || []), ...(CARDS.special || []));
+  for (const d of ids) { const c = ALL_CARDS[d.id]; if (c) out.push(c); }
+  return out;
 }
 
 /* ---------------- 启动 ---------------- */
@@ -400,5 +479,7 @@ window.addEventListener('DOMContentLoaded', () => {
       showMainMenu();
     });
   }
+  // 开场动画/主菜单播放期间后台预热卡面（不阻塞交互）
+  warmCardArt();
 });
 

@@ -1,6 +1,6 @@
 {
   "name": "gwent-web",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": true,
   "description": "《巫师3》内置昆特牌（经典三排版）网页复刻 —— 完整规则 + 官方卡面 + 难度分级 + 卡组编辑器",
   "main": "server.js",

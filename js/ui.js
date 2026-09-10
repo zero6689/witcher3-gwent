@@ -148,7 +148,7 @@ const UI = {
     if (!to || !to.width) return;
     const ghost = document.createElement('div');
     ghost.className = 'card special-card fly-ghost';
-    ghost.innerHTML = cardFaceHtml(card);
+    ghost.innerHTML = cardFaceHtml(card, { eager: true });
     ghost.style.cssText = `position:fixed;left:${fromRect.left}px;top:${fromRect.top}px;width:${fromRect.width}px;height:${fromRect.height}px;z-index:95;pointer-events:none;margin:0;`;
     document.body.appendChild(ghost);
     const dx = (to.left + to.width / 2) - (fromRect.left + fromRect.width / 2);
@@ -387,6 +387,15 @@ const UI = {
     return (row === 'melee' && w.frost) || (row === 'ranged' && w.fog) || (row === 'siege' && w.rain);
   },
 
+  /** 牌桌能承受的最大卡宽：由视口高度反推，保证「3+3 排 + 手牌」尽量一屏放下
+   *  竖向占用 ≈ 9.625 × 卡宽 + 271px（顶栏 + 中线 + 控制栏 + 手牌内边距） */
+  _maxRowCardW() {
+    const vh = (typeof window !== 'undefined' && window.innerHeight) || 0;
+    const vw = (typeof window !== 'undefined' && window.innerWidth) || 0;
+    if (!vh || vw <= 900) return 64;               // 手机/窄屏沿用原有固定尺寸
+    return Math.max(44, Math.min(68, Math.floor((vh - 271) / 9.625)));
+  },
+
   /** 根据本排卡牌数量与可用宽度，计算合适的卡牌宽度（层叠后仍全部可见） */
   _fitRowCards(cardsWrap, rowDiv) {
     const n = cardsWrap.children.length;
@@ -397,7 +406,7 @@ const UI = {
     // 每张牌可见宽度 = cardw * 0.53（首张为 1.0）→ 总宽 = cardw * (1 + 0.53*(n-1))
     const factor = 1 + 0.53 * (n - 1);
     let w = Math.floor(avail / factor);
-    w = Math.max(34, Math.min(64, w));
+    w = Math.max(34, Math.min(this._maxRowCardW(), w));
     rowDiv.style.setProperty('--cardw', w + 'px');
   },
 
@@ -428,6 +437,7 @@ const UI = {
     div.dataset.spy = c.spied ? '1' : '';
     // 卡面结构：原画 / 阵营竖条 / 战力圆徽 / 技能圆徽 / 名字带
     div.innerHTML = cardFaceHtml(c, {
+      eager: true,
       power: c._effective != null ? c._effective : (c.power || 0),
       badges: cardBadges(c).concat(c.spied ? [{ icon: '🕵', cls: 'spy', title: '间谍（在对方场上）' }] : []),
     });
@@ -452,7 +462,7 @@ const UI = {
     if (!host) return;
     const type = card.type || card.t;
     host.className = 'card-preview' + (type === 'hero' ? ' hero' : '') + (type === 'special' ? ' special-card' : '');
-    host.innerHTML = cardFaceHtml(card, { power: card._effective != null ? card._effective : undefined });
+    host.innerHTML = cardFaceHtml(card, { eager: true, power: card._effective != null ? card._effective : undefined });
     host.classList.add('show');
   },
 
@@ -491,7 +501,7 @@ const UI = {
       d.className = cls;
       if (this._prevHand && !this._prevHand.has(c.uid)) d.classList.add('enter');
       d.dataset.index = i;
-      d.innerHTML = cardFaceHtml(c, { power: c.power != null ? c.power : 0 });
+      d.innerHTML = cardFaceHtml(c, { eager: true, power: c.power != null ? c.power : 0 });
       d._card = c;
       this._bindPreview(d, c);
       d.title = c.desc ? `${c.name.zh}：${c.desc}` : c.name.zh;
@@ -601,7 +611,7 @@ const UI = {
     if (!host || !ms || typeof document.createElement !== 'function') { done(); return; }
     const type = card.type || card.t;
     const cls = 'card cs-card' + (type === 'hero' ? ' hero' : '') + (type === 'special' ? ' special-card' : '');
-    host.innerHTML = `<div class="${cls}">${cardFaceHtml(card)}</div>`;
+    host.innerHTML = `<div class="${cls}">${cardFaceHtml(card, { eager: true })}</div>`;
     host.classList.add('show');
     clearTimeout(this._csTimer);
     this._csTimer = setTimeout(() => {

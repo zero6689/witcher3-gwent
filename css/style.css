@@ -591,8 +591,12 @@ body::after {
 .card::before {
   content: ''; position: absolute; inset: 0; z-index: 2; pointer-events: none;
   border-radius: 2px;
+  /* 卡面压暗（原来挂在 .art::after 上；卡面改用 <img> 后伪元素不生效，挪到 .card::before） */
+  background: linear-gradient(180deg, rgba(0,0,0,.15) 0%, transparent 30%, transparent 60%, rgba(0,0,0,.55) 100%);
   box-shadow: inset 0 0 12px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,235,190,.18);
 }
+.card.hero::before { background: linear-gradient(180deg, rgba(255,220,120,.10), transparent 40%, rgba(60,40,10,.6)); }
+.card.special-card::before { background: linear-gradient(180deg, rgba(255,255,255,.08), transparent 30%, rgba(0,0,0,.55)); }
 .card .art { z-index: 1; }
 .card .name {
   font-family: var(--font-display); font-size: 8.5px; letter-spacing: .3px;
@@ -919,7 +923,7 @@ button.primary {
 .zone { overflow: visible; min-height: auto; }
 .rows { gap: 5px; }
 .row {
-  --cardw: 64px;
+  --cardw: var(--fit-cardw);
   flex: 0 0 auto;
   min-height: calc(var(--cardw) * 1.375 + 16px);
   overflow: visible;
@@ -934,6 +938,23 @@ button.primary {
 
 /* 手牌区允许横向滚动（牌多时不挤成一条） */
 .player-hand { overflow-x: auto; overflow-y: visible; padding-bottom: 6px; }
+
+/* ============================================================
+ *  视口自适应卡牌尺寸（桌面）
+ *  竖向占用 ≈ 9.625 × 卡宽 + 271px，反解出「刚好一屏放得下」的卡宽：
+ *  1080p → 68px（比原来的 64px 更大，看得更清楚）
+ *  900p  → 65px
+ *  768p  → 51px（原来 64px 会把手牌挤到屏幕外 108px）
+ * ============================================================ */
+:root { --fit-cardw: clamp(44px, calc((100vh - 271px) / 9.625), 68px); }
+
+@media (min-width: 901px) {
+  .hand .card {
+    width: var(--fit-cardw);
+    height: calc(var(--fit-cardw) * 1.375);
+  }
+  .hand { min-height: 0; }
+}
 
 /* ============================================================
  *  开场动画
@@ -1234,6 +1255,8 @@ button.primary {
  * ============================================================ */
 .card { overflow: hidden; }
 .card .art { position: absolute; inset: 0; z-index: 1; background-size: cover; background-position: center; }
+/* 卡面用 <img> 实现：原生懒加载 + 解码异步，且内存占用低于 CSS 背景图 */
+img.art { width: 100%; height: 100%; object-fit: cover; display: block; border: 0; }
 
 /* 左侧阵营色竖条 */
 .card .faction-bar {

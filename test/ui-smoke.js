@@ -99,9 +99,13 @@ check('④ 选「困难」→ 进入卡组编辑器（卡池带本地卡面）',
   assert(pool.length > 20, `卡池卡数 ${pool.length}`);
   assert(ov.querySelectorAll('.leader-chip').length === 4, '领袖选项应为 4');
   // 卡池里的每张牌都必须挂上本地卡面（不是占位色块）
-  const arts = ov.querySelectorAll('.pool-card .card .art');
-  const withArt = arts.filter(a => String(a.style.backgroundImage || '').includes('assets/cards'));
+  const arts = ov.querySelectorAll('.pool-card .card img.art');
+  const withArt = arts.filter(a => String(a.getAttribute('src') || '').includes('assets/cards'));
   assert(withArt.length === arts.length, `卡池卡面缺失：${arts.length - withArt.length}/${arts.length} 张是占位色块`);
+  // 懒加载：卡池里除首屏外的卡面都应标 lazy（否则会一次拉满 143 张图）
+  const lazy = arts.filter(a => a.getAttribute('loading') === 'lazy');
+  assert(lazy.length > 0, '卡池卡面缺少 loading="lazy"，会导致首屏一次性加载全部卡图');
+  assert(arts.every(a => a.getAttribute('decoding') === 'async'), '卡面缺少 decoding="async"');
   // 领袖卡面同样必须挂上
   const lcArt = ov.querySelectorAll('.leader-chip .lc-art').filter(a => String(a.style.backgroundImage || '').includes('assets/cards'));
   assert(lcArt.length === 4, `领袖卡面缺失：${lcArt.length}/4`);
@@ -155,7 +159,7 @@ check('⑧ 开始游戏 → 牌桌渲染', () => {
 });
 
 check('⑨ 卡面原画（本地文件）+ 音效开关按钮', () => {
-  const withArt = doc.querySelectorAll('.card .art').filter(a => String(a.style.backgroundImage || '').includes('assets/cards'));
+  const withArt = doc.querySelectorAll('.card img.art').filter(a => String(a.getAttribute('src') || '').includes('assets/cards'));
   assert(withArt.length > 0, '没有卡面挂载本地原画');
   const btns = doc.getElementById('actionButtons').querySelectorAll('button');
   assert(btns.some(b => /音效|静音/.test(b.textContent)), '缺少音效开关按钮');

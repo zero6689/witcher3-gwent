@@ -158,7 +158,7 @@ js/ui.js                 DOM 渲染、动画、结算面板
 js/main.js               主菜单 / 开场动画 / 设置 / 开局流程
 android-app/             Capacitor Android 工程（打包 APK 用）
 .github/workflows/       GitHub Actions 云端编译 APK
-scripts/                 卡图下载、图标生成、资源打包
+scripts/                 卡图下载（含 fetch-art-small.js 压缩重下）、性能体检、图标生成、资源打包
 test/                    测试套件
 ```
 
@@ -172,6 +172,27 @@ node test/ui-smoke.js       # 自建 DOM 垫片，跑真实 UI 流程（15 项�
 node test/auto-play-test.js # 「点卡自动上场」行为
 node test/difficulty-test.js# 四档难度胜率曲线（固定种子，可复现）
 ```
+
+## 加载性能（v1.0.5 优化）
+
+用真实浏览器（headless Edge + CDP）量过的数据，脚本见 `scripts/perf-audit.js`：
+
+```powershell
+node server.js 8099 --host 127.0.0.1      # 另开一个窗口起服务
+node scripts/perf-audit.js http://127.0.0.1:8099
+# → out/perf-report.json + out/perf-deckbuilder.png + out/perf-board-1080p.png
+```
+
+| 项目 | 优化前 | 优化后 |
+| --- | --- | --- |
+| 单张卡面 | 393×724 / 平均 86 KB | 320×589 / 平均 49 KB（`scripts/fetch-art-small.js 320` 重下） |
+| 143 张卡面合计 | 12.1 MB | 6.9 MB |
+| 卡池首屏（42 张） | 一次全量解码，逐张冒出 | `<img loading="lazy" decoding="async">`，进入编辑器 0.7s 内全部出图 |
+| 重复访问 | 每次重新下载 | Service Worker cache-first（`sw.js` 版本号递增即刷新缓存） |
+| 打开网页→主菜单 | 卡面等用户点进去才开始拉 | 空闲时段后台预热（每批 4 张、`fetchPriority: low`、省流/2G 自动跳过） |
+
+另外牌桌尺寸改为**按视口高度自适应**（`--fit-cardw`）：1080p 手牌 68px（比原来的 64px 更大），
+768p 自动收到 52px，保证「3+3 排 + 手牌」在 768p～1080p 全都一屏可见、不再把手牌挤到屏幕外。
 
 ## 版权与声明
 

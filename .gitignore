@@ -15,7 +15,11 @@ Thumbs.db
 
 # 本地备份
 *.bak
+assets/cards.bak/
 css/style.base.css
+
+# 性能体检产物（headless 浏览器报告/截图）
+out/
 
 # Android 构建产物（由 scripts/prepare-www.js 与 Capacitor 生成）
 android-app/www/
