@@ -20,12 +20,21 @@ const INCLUDE = [
   'icons',
 ];
 
+/* 只应存在于开发机、不该进 APK 的东西（否则白涨十几 MB） */
+const EXCLUDE_DIRS = new Set([
+  'cards.bak',      // 卡面压缩前的备份（12 MB）
+  'icon-src',       // 图标源图（应用图标已生成到 icons/ 与 android res/）
+  'out',            // 性能体检产物
+  '.tools', '.npm-cache', '.npm-tmp', '.release', 'node_modules',
+  'test', 'scripts', 'android-app', '.git', '.github', '.vscode',
+]);
+
 function copyRecursive(src, dst) {
   const st = fs.statSync(src);
   if (st.isDirectory()) {
     fs.mkdirSync(dst, { recursive: true });
     for (const name of fs.readdirSync(src)) {
-      if (name === 'node_modules' || name.startsWith('.')) continue;
+      if (EXCLUDE_DIRS.has(name) || name.startsWith('.')) continue;
       copyRecursive(path.join(src, name), path.join(dst, name));
     }
   } else {

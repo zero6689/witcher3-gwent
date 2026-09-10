@@ -1,4 +1,4 @@
-﻿# ============================================================
+# ============================================================
 # 一键编译 APK（本地，无需 Android Studio）
 # 前置：先跑 scripts\setup-android.ps1 装工具链
 # 用法（普通 PowerShell 窗口）：
@@ -69,7 +69,7 @@ if (Test-Path $wrap) {
 }
 
 # ---------- 4.5 版本号跟随根 package.json ----------
-$ver = (Get-Content (Join-Path $repo 'package.json') -Raw | ConvertFrom-Json).version
+$ver = (Get-Content (Join-Path $repo 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json).version
 $gradleFile = Join-Path $androidDir 'app\build.gradle'
 if ((Test-Path $gradleFile) -and $ver) {
   $code = [int]((($ver -split '\.') | ForEach-Object { $_.PadLeft(2, '0') }) -join '')
@@ -116,6 +116,32 @@ if ($code -ne 0) { throw "Gradle 编译失败（exit $code）" }
 
 $apk = Join-Path $androidDir 'app\build\outputs\apk\debug\app-debug.apk'
 if (-not (Test-Path $apk)) { throw "未找到 APK：$apk" }
+
+# ---------- 9. 体积健全性检查 ----------
+# Gradle 增量打包会「原地覆盖」APK：上一版删掉的大文件（例如 assets/cards.bak）会变成死字节，
+# 体积虚高但 APK 仍可用。检测到大量残留就 clean 重编一次。
+function Get-ApkDeadBytes([string]$path) {
+  try {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
+    $z = [System.IO.Compression.ZipFile]::OpenRead($path)
+    $sum = ($z.Entries | Measure-Object Length -Sum).Sum
+    $z.Dispose()
+    return ((Get-Item $path).Length - $sum)
+  } catch { return 0 }
+}
+$dead = Get-ApkDeadBytes $apk
+if ($dead -gt 2MB) {
+  Say ("增量打包残留死字节 {0:N1} MB（APK 体积虚高）→ clean 后重编" -f ($dead / 1MB))
+  Push-Location $androidDir
+  & '.\gradlew.bat' clean --no-daemon | Out-Null
+  & '.\gradlew.bat' assembleDebug --no-daemon
+  $code2 = $LASTEXITCODE
+  Pop-Location
+  if ($code2 -ne 0) { throw "Gradle 重新编译失败（exit $code2）" }
+  $dead = Get-ApkDeadBytes $apk
+  Say ("重编后残留死字节 {0:N1} KB" -f ($dead / 1KB))
+}
+
 $out = Join-Path $repo 'gwent-android-debug.apk'
 Copy-Item $apk $out -Force
 Say ("编译完成 ✅  {0}  ({1:N1} MB)" -f $out, ((Get-Item $out).Length / 1MB))
