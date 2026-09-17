@@ -37,6 +37,14 @@ const UI = {
     const unlock = () => { if (typeof SFX !== 'undefined') SFX.unlock(); };
     document.addEventListener('click', unlock, { once: true });
     document.addEventListener('keydown', unlock, { once: true });
+    // 侧栏「牌堆 / 坟场」计数牌可点击 → 查看坟场
+    for (const [id, side] of [['playerDiscard', 'player'], ['enemyDiscard', 'ai']]) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      el.style.cursor = 'pointer';
+      el.title = '点击查看坟场（对手打过的牌）';
+      el.addEventListener('click', () => this.showGraveyard(side));
+    }
   },
 
   /* ---------------- 渲染主入口 ---------------- */
@@ -56,7 +64,62 @@ const UI = {
     this.renderMidline();
     this.renderPlayer();
     this.renderControls();
+    this.renderLog();
     this._afterRender();
+  },
+
+  /* ---------------- 战斗日志（对手打了什么牌，在这里留痕） ---------------- */
+  renderLog() {
+    const host = this.el('log');
+    if (!host) return;
+    const entries = this.g.log.slice(-120);
+    const cls = { player: 'lg-me', ai: 'lg-ai', sys: 'lg-sys' };
+    const who = { player: '你', ai: '对手', sys: '' };
+    host.innerHTML = entries.map(l =>
+      `<div class="${cls[l.who] || 'lg-sys'}">${l.who === 'sys' ? '' : who[l.who] + '：'}${this._esc(l.msg)}</div>`
+    ).join('');
+    host.scrollTop = host.scrollHeight;
+  },
+
+  _esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  },
+
+  /* ---------------- 坟场查看（双方都可查） ---------------- */
+  showGraveyard(side) {
+    const g = this.g;
+    if (!g || g.needMulligan || g.pendingMedic || g.pendingFirstPick) return;   // 有未完成的选择时不打断
+    const ov = this.el('overlay');
+    const sName = side === 'ai' ? '对手' : '你';
+    const cards = g.side[side].graveyard.slice().reverse();
+    ov.classList.remove('hidden');
+    ov.innerHTML = `
+      <div class="modal grave-modal">
+        <h2>坟场 · ${sName}</h2>
+        <div class="grave-tabs">
+          <button class="chip${side === 'player' ? ' active' : ''}" data-grave="player">你的坟场 · ${g.side.player.graveyard.length}</button>
+          <button class="chip${side === 'ai' ? ' active' : ''}" data-grave="ai">对手坟场 · ${g.side.ai.graveyard.length}</button>
+        </div>
+        <div class="hint">${cards.length ? `共 ${cards.length} 张（新打出的在最前）` : '坟场是空的'}</div>
+        ${cards.length ? `<div class="deck-grid grave-grid">
+          ${cards.map(c => `
+            <div class="deck-pick">
+              ${cardFaceHtml(c, { eager: true })}
+              <div class="meta">${c.name.zh}${c.type === 'special' ? ' · 特殊牌' : c.type === 'hero' ? ' · 英雄' : ''}</div>
+            </div>`).join('')}
+        </div>` : ''}
+        <div class="sp-actions"><button id="graveClose" class="primary">关闭</button></div>
+      </div>`;
+    ov.querySelectorAll('[data-grave]').forEach(el => {
+      el.addEventListener('click', () => this.showGraveyard(el.dataset.grave));
+    });
+    document.getElementById('graveClose').addEventListener('click', () => {
+      ov.classList.add('hidden'); ov.innerHTML = '';
+      if (g.pendingMedic || g.pendingFirstPick) { this.render(); this.checkPending(); return; }
+      if (g.over) { this._shownResults = false; this.showResults(); }
+      else this.render();
+    });
   },
 
   /** 渲染后处理：记录场上卡牌、分数滚动动画 */
@@ -70,7 +133,7 @@ const UI = {
     this._prevUids = uids;
     this._prevHand = new Set(g.side.player.hand.map(c => c.uid));
     // 新一局开始 → 全宽横幅提示先后手
-    if (g.round !== this._lastRound && !g.needMulligan && !g.over) {
+    if (g.round !== this._lastRound && !g.needMulligan && !g.over && !g.pendingFirstPick) {
       this._lastRound = g.round;
       this._turnOverlay(g.current === 'player' ? '你先手' : '对手先手');
     }
@@ -247,15 +310,21 @@ const UI = {
   },
 
   /** 全宽回合横幅：「你先手」+ 沙漏 */
-  _turnOverlay(text) {
+  _turnOverlay(text, icon) {
     const el = this.el('turnOverlay');
     if (!el) return;
-    el.innerHTML = `<span class="to-hourglass">⏳</span><span class="to-text">${text}</span>`;
+    el.innerHTML = `<span class="to-hourglass">${icon || '⏳'}</span><span class="to-text">${this._esc(text)}</span>`;
     el.classList.remove('show');
     void el.offsetWidth;
     el.classList.add('show');
     clearTimeout(this._toTimer);
     this._toTimer = setTimeout(() => el.classList.remove('show'), 1900);
+  },
+
+  /** 对手行动横幅：明确告诉你对手这一手做了什么 */
+  _opponentBanner(text) {
+    const t = String(text || '');
+    this._turnOverlay(t.length > 96 ? t.slice(0, 96) + '…' : t, '⚔');
   },
 
   /* ---------------- 顶栏 ---------------- */
@@ -563,6 +632,12 @@ const UI = {
       if (on) SFX.play('click');
     });
     box.appendChild(sound);
+    // 坟场查看（双方都能查；对手打过的牌留在这里 —— 手机端侧栏被隐藏，必须常驻按钮）
+    const grave = document.createElement('button');
+    grave.textContent = '🪦 坟场';
+    grave.title = '查看双方坟场（对手打过的牌都在这里）';
+    grave.addEventListener('click', () => this.showGraveyard('player'));
+    box.appendChild(grave);
     if (g.over) {
       const again = document.createElement('button');
       again.className = 'primary';
@@ -686,18 +761,18 @@ const UI = {
     return best;
   },
 
-  /** 号角自动选择收益最大的一排 */
+  /** 号角自动选择收益最大的一排（已被领袖技翻倍的排排除：号角不叠加，等于白扔） */
   _bestHornRow() {
     const g = this.g;
     const side = g.side.player;
-    let best = 'melee', bestVal = -1;
+    let best = null, bestVal = -1;
     for (const r of ROWS) {
-      if (side.horn[r]) continue;
+      if (side.horn[r] || g.doubled.player[r]) continue;
       const total = side.rows[r].filter(c => !c.tomb && c.type !== 'hero')
         .reduce((a, c) => a + (c._effective || c.power || 0), 0);
       if (total > bestVal) { bestVal = total; best = r; }
     }
-    return best;
+    return best || ROWS.find(r => !side.horn[r] && !g.doubled.player[r]) || 'melee';
   },
 
   playSelectedSpecial(c) {
@@ -774,9 +849,41 @@ const UI = {
   afterAction() {
     const g = this.g;
     this.render();
-    if (g.pendingMedic) { this.showMedicModal(); return; }
+    if (this.checkPending()) return;
     if (g.over) { this.render(); return; }
     if (g.current === 'ai') this.scheduleAI();
+  },
+
+  /** 引擎挂起的「必须由玩家决定」的选择（医生复活 / 松鼠党决定先手） */
+  checkPending() {
+    const g = this.g;
+    if (g.pendingMedic) { this.showMedicModal(); return true; }
+    if (g.pendingFirstPick) { this.showFirstPickModal(); return true; }
+    return false;
+  },
+
+  /* ---------------- 松鼠党阵营被动：决定本局谁先手 ---------------- */
+  showFirstPickModal() {
+    const g = this.g;
+    const ov = this.el('overlay');
+    ov.classList.remove('hidden');
+    ov.innerHTML = `
+      <div class="modal firstpick-modal">
+        <h2>第 ${g.round} 局 · 谁先手？</h2>
+        <div class="hint">松鼠党阵营被动：由你决定本局谁先出牌（先手通常吃亏，因为要先把牌打在桌上）</div>
+        <div class="sp-actions">
+          <button id="fpMe" class="primary">我先手</button>
+          <button id="fpOp">让对手先手</button>
+        </div>
+      </div>`;
+    const pick = (takeFirst) => {
+      ov.classList.add('hidden'); ov.innerHTML = '';
+      g.applyFirstChoice(takeFirst);
+      this.render();
+      if (g.current === 'ai') this.scheduleAI();
+    };
+    document.getElementById('fpMe').addEventListener('click', () => pick(true));
+    document.getElementById('fpOp').addEventListener('click', () => pick(false));
   },
 
   /* ---------------- 医生：选择复活目标 ---------------- */
@@ -807,6 +914,7 @@ const UI = {
       ov.classList.add('hidden'); ov.innerHTML = '';
       g.applyMedic('player', uid);
       this.render();
+      if (this.checkPending()) return;        // 医生连锁：复活的又是医生
       if (g.current === 'ai') this.scheduleAI();
     };
     ov.querySelectorAll('.deck-pick').forEach(el => {
@@ -825,15 +933,16 @@ const UI = {
     const g = this.g;
     if (g.over) { this.render(); return; }
     const ai = new GwentAI(g, g.aiSkill);
+    const logBefore = g.log.length;
+    const roundBefore = g.round;
     const act = await ai.act();
-    // AI 无法行动（例如手中只剩无法使用的诱饵）→ 自动过牌，避免卡死
-    if (act === null && !g.over && g.current === 'ai' && !g.passed.ai) {
-      g.pass('ai');
-      this.render();
-      if (g.current === 'ai') this.scheduleAI();
-      return;
-    }
     this.render();
+    // 对手刚才做了什么 —— 横幅提示（日志里也会留痕，可随时用「坟场」复核）
+    if (g.round === roundBefore && !g.over) {
+      const fresh = g.log.slice(logBefore).filter(l => l.who === 'ai');
+      if (fresh.length) this._opponentBanner(fresh.map(l => l.msg).join('；'));
+    }
+    if (this.checkPending()) return;
     if (act === null) { this.render(); return; }
     if (g.over) { this.render(); return; }
     if (g.current === 'ai' && !g.passed.ai) this.scheduleAI();

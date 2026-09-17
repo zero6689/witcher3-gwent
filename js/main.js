@@ -309,10 +309,11 @@ function showMulliganUI() {
     if (replacements.length) {
       g.doMulligan(replacements.map(i => ({ side: 'player', index: i })));
     }
-    g.finishMulligan();
+    g.finishMulligan();                 // 内部会先让 AI 完成换牌，再开第一局
     if (typeof SFX !== 'undefined') SFX.play('card');
     UI.init(game);
     UI.render();
+    if (UI.checkPending && UI.checkPending()) return;   // 松鼠党被动：先选谁先手
     if (g.current === 'ai') UI.scheduleAI();
   };
 

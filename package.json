@@ -1,14 +1,15 @@
 {
   "name": "gwent-web",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "private": true,
   "description": "《巫师3》内置昆特牌（经典三排版）网页复刻 —— 完整规则 + 官方卡面 + 难度分级 + 卡组编辑器",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "serve:lan": "node server.js 8080",
-    "test": "node test/static-check.js && node test/headless-test.js && node test/ui-smoke.js && node test/auto-play-test.js && node test/difficulty-test.js",
+    "test": "node test/static-check.js && node test/rules-test.js && node test/headless-test.js && node test/ui-smoke.js && node test/auto-play-test.js && node test/difficulty-test.js",
     "test:static": "node test/static-check.js",
+    "test:rules": "node test/rules-test.js",
     "test:engine": "node test/headless-test.js",
     "test:ui": "node test/ui-smoke.js",
     "test:autoplay": "node test/auto-play-test.js",

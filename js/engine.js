@@ -34,7 +34,7 @@ const LEADER_CN = {
   double_siege:      '攻城：己方攻城排单位战力翻倍',
   double_ranged:     '远程：己方远程排单位战力翻倍',
   double_melee:      '近战：己方近战排单位战力翻倍',
-  scorch_enemy_max:  '焚风：消灭对方场上战力最高的一张非英雄单位',
+  scorch_enemy_max:  '焚风：摧毁对方场上战力最高的非英雄单位（并列全灭）',
   draw_one:          '谋略：抽 1 张牌',
   draw_two:          '谋略：抽 2 张牌',
   revive_own:        '亡灵：从己方坟场复活一张单位上场',
@@ -45,6 +45,17 @@ const LEADER_CN = {
   frost_again:       '寒潮：天气变为刺骨冰霜（清除其它天气）',
   rain_again:        '暴雨倾盆：天气变为倾盆大雨（清除其它天气）',
   take_enemy_hand:   '王权：随机取对方手牌 1 张加入己方手牌',
+  deck_weather_frost: '从牌组取出一张「刺骨冰霜」并使用（清除其它天气）',
+  deck_weather_fog:  '从牌组取出一张「蔽日浓雾」并使用（清除其它天气）',
+  deck_weather_rain: '从牌组取出一张「倾盆大雨」并使用（清除其它天气）',
+  deck_weather_any:  '从牌组取出一张天气牌并使用（清除其它天气）',
+  see_opponent_hand: '查看对手手牌中随机 3 张',
+  cancel_opponent_leader: '封锁对手的领袖技（对手已用时无效）',
+  discard_2_draw_1:  '弃掉 2 张牌，然后抽 1 张牌',
+  revive_to_hand:    '从己方坟场取一张牌加入手牌',
+  destroy_enemy_melee:  '焚风：对方近战排总战力 ≥10 时，摧毁该排最强的非英雄单位（并列全灭）',
+  destroy_enemy_siege:  '焚风：对方攻城排总战力 ≥10 时，摧毁该排最强的非英雄单位（并列全灭）',
+  draw_extra_first_round: '被动：第一局开始时额外抽 1 张牌',
 };
 
 /* ---------------- 纸牌对象：见 data.js 的 makeCard（此处不再重复定义） ---------------- */
@@ -76,6 +87,11 @@ class GwentGame {
     this.roundWinner = null;    // 本局赢家
     this.over = false;
     this.needMulligan = false;
+    // 领袖「翻倍整排」标记（与号角同效，不叠加 —— 见 _effectivePower）
+    this.doubled = { player: { melee: false, ranged: false, siege: false },
+                     ai:     { melee: false, ranged: false, siege: false } };
+    this.aiMulliganDone = false;
+    this.pendingFirstPick = null;   // 松鼠党被动：由该方决定谁先手（等待 UI 选择）
     this.needLeaderTarget = null; // 需要点选目标的领袖效果类型
     this.log = [];
     this.events = [];            // 供 UI 消费的事件队列（音效/动画）
@@ -122,30 +138,102 @@ class GwentGame {
       }
     }
     this.needMulligan = true;
+    this.aiMulliganDone = false;
+    this.mulliganUsed = { player: 0, ai: 0 };   // 每方最多换 2 张（整个换牌阶段累计）
     this._log('sys', '游戏开始！双方各抽 10 张牌，可各换 2 张。');
     this._log('sys', `${this.side.player.deck.faction}  VS  ${this.side.ai.deck.faction}`);
   }
 
   getSides() { return this.side; }
 
-  /** 换牌：把手中某张放回牌堆并重抽；hands: [{side,index}] */
+  /** 换牌（开局调度）：把手中某张洗回牌堆并重抽一张；hands: [{side,index}]
+   *  真规则（W3 内置昆特）：开局各 10 张，双方均可最多换 2 张；
+   *  换回的牌洗回牌堆（可能再次抽到，但不会在本轮换牌中抽回同一张）。 */
   doMulligan(replacements) {
     if (!this.needMulligan) return;
-    for (const r of replacements) {
+    const LIMIT = (typeof DECK_RULES !== 'undefined' && DECK_RULES.mulligan) || 2;
+    if (!this.mulliganUsed) this.mulliganUsed = { player: 0, ai: 0 };
+    const swaps = {};                       // side -> [card]
+    for (const r of (replacements || [])) {
       const s = this.side[r.side];
+      if (!s) continue;
+      if ((this.mulliganUsed[r.side] || 0) >= LIMIT) continue;   // 每方整局最多换 2 张
       const c = s.hand.splice(r.index, 1)[0];
       if (!c) continue;
-      s.pile.push(c);            // 换回的牌放到牌堆底部，避免立刻抽回
-      // 重抽一张
-      const nc = this._drawCards(s, 1);
-      // 把 nc 插回原位附近以便玩家感知
-      s.hand.splice(Math.min(r.index, s.hand.length), 0, nc[0]);
+      this.mulliganUsed[r.side] = (this.mulliganUsed[r.side] || 0) + 1;
+      (swaps[r.side] = swaps[r.side] || []).push(c);
     }
-    this.needMulligan = false;
-    this._log('sys', `换牌完成：共替换 ${replacements.length} 张。`);
+    const sides = Object.keys(swaps);
+    if (!sides.length) return;
+    // 1) 换回的牌随机洗回牌堆
+    for (const sideName of sides) {
+      const s = this.side[sideName];
+      for (const c of swaps[sideName]) {
+        const pos = Math.floor(Math.random() * (s.pile.length + 1));
+        s.pile.splice(pos, 0, c);
+      }
+    }
+    // 2) 各补抽等量（跳过本回合刚换回的牌）
+    for (const sideName of sides) {
+      const s = this.side[sideName];
+      for (const c of swaps[sideName]) {
+        const nc = this._drawSkipping(s, new Set(swaps[sideName].map(x => x.uid)));
+        if (nc) s.hand.push(nc);
+      }
+    }
+    this._log('sys', `换牌完成：${sides.map(s => (s === 'player' ? '你' : '对手') + '换 ' + swaps[s].length + ' 张').join('，')}。`);
+  }
+
+  /** 抽一张，跳过黑名单（本次换回的牌） */
+  _drawSkipping(side, black) {
+    for (let i = 0; i < side.pile.length; i++) {
+      if (black.has(side.pile[i].uid)) continue;
+      const c = side.pile.splice(i, 1)[0];
+      c.owner = side.name;
+      return c;
+    }
+    return null;
+  }
+
+  /** AI 开局调度（引擎侧实现，保证所有入口都一致；难度越高换得越准） */
+  aiMulligan() {
+    if (this.aiMulliganDone) return;
+    this.aiMulliganDone = true;
+    if (!this.needMulligan) return;
+    const side = this.side.ai;
+    const skill = this.aiSkill == null ? 0.6 : this.aiSkill;
+    if (skill < 0.4) return;                       // 简单 AI 不换牌
+    const limit = skill >= 0.8 ? 2 : 1;
+    const scored = side.hand.map((c, i) => ({ i, c, v: this._mulliganValue(c) }));
+    scored.sort((a, b) => a.v - b.v);
+    const picks = scored.filter(x => x.v < 5).slice(0, limit);
+    if (!picks.length) return;
+    picks.sort((a, b) => b.i - a.i);               // 从后往前删，索引不串位
+    this.doMulligan(picks.map(p => ({ side: 'ai', index: p.i })));
+  }
+
+  _mulliganValue(c) {
+    if (c.ability === 'spy') return 100;
+    if (c.ability === 'medic') return 80;
+    if (c.type === 'hero') return 90;
+    if (c.type === 'special') {
+      if (c.kind === 'horn') return 45;
+      if (c.kind === 'scorch') return 40;
+      if (c.kind === 'clear') return 30;
+      if (c.kind === 'weather') return 25;
+      return 20;
+    }
+    if (c.ability === 'muster') return 55;
+    if (c.ability === 'commanders_horn') return 60;
+    let v = c.power || 0;
+    if (c.ability === 'tight_bond') v += 2;
+    if (c.ability === 'morale_boost') v += 3;
+    return v;
   }
 
   finishMulligan() {
+    if (!this.needMulligan) return;
+    this.aiMulligan();                 // 双方都要换牌
     this.needMulligan = false;
     this.beginRound();
   }
@@ -154,25 +242,57 @@ class GwentGame {
     this.passed = { player: false, ai: false };
     this.weather = { frost: false, fog: false, rain: false };
     for (const s of ['player', 'ai']) {
-      // 重新铺排：上一局已出场牌留在场上？不 —— 经典昆特：每局重新开始，场上清空、坟场累计
       const side = this.side[s];
+      // 怪物阵营被动：小局结束时随机留下 1 张单位牌继续留在场上
+      const keep = side.deck.faction === 'monsters' ? this._monstersKeep(s) : null;
       for (const r of ROWS) {
-        while (side.rows[r].length) {
-          const c = side.rows[r].shift();
-          side.graveyard.push(c);   // 已出过场 → 进坟场（英雄同理，经典规则英雄死后也入坟但不可复活）
-          c.placedRow = null;
-        }
+        const kept = (keep && keep.placedRow === r) ? keep : null;
+        const leaving = side.rows[r].filter(c => c !== kept);
+        side.rows[r] = kept ? [kept] : [];
+        for (const c of leaving) this._toGrave(c, s);
         side.horn[r] = false;
+        this.doubled[s][r] = false;
       }
+      if (keep) this._log(s, `  怪物阵营被动：「${keep.name.zh}」留在场上进入下一局`);
     }
-    if (this.round > 1) this._drawTo('player', 10), this._drawTo('ai', 10);
-    // 谁先手：第一局由构造指定；之后上局胜者先手
+    // 小局之间不抽牌（真规则：开局 10 张用到底，额外摸牌只靠间谍/领袖/北方被动）
+    // 先手：第一局由开局决定；之后「上局胜者先手」
     if (this.round === 1) this.current = this.first;
-    else {
-      // 若上局平局，沿用「上上局先手方换边」简化：改为本局由未先手方先手
-      this.current = this._prevFirst === 'player' ? 'ai' : 'player';
+    else if (this.roundWinner) this.current = this.roundWinner;
+    else this.current = this._prevFirst === 'player' ? 'ai' : 'player';
+    // 松鼠党阵营被动：由该方决定谁先手
+    const chooser = this._firstChooser();
+    if (chooser === 'player') {
+      this.pendingFirstPick = { round: this.round };
+      this._log('sys', '松鼠党被动：由你决定本局谁先手（请选择）');
+      return;
     }
+    if (chooser === 'ai') this.current = this._aiPickFirst();
+    this._startRoundPlay();
+  }
+
+  /** 谁有「决定先手」的权利（松鼠党阵营被动） */
+  _firstChooser() {
+    if (this.side.player.deck.faction === 'scoiatael') return 'player';
+    if (this.side.ai.deck.faction === 'scoiatael') return 'ai';
+    return null;
+  }
+
+  /** AI 的先手选择：先手是劣势，通常选择后手 */
+  _aiPickFirst() { return 'player'; }
+
+  /** UI/驱动：松鼠党被动选择先手方 */
+  applyFirstChoice(takeFirst) {
+    if (!this.pendingFirstPick) return { ok: false };
+    this.pendingFirstPick = null;
+    this.current = takeFirst ? 'player' : 'ai';
+    this._startRoundPlay();
+    return { ok: true };
+  }
+
+  _startRoundPlay() {
     this._prevFirst = this.current;
+    this.refresh();                      // 新一局场上为空 → 必须重算分数/缓存，否则 UI 会显示上一局的比分
     this._log('sys', `———— 第 ${this.round} 局开始，${this.current === 'player' ? '你' : '对手'} 先手 ————`);
     this._logTurn();
   }
@@ -259,11 +379,39 @@ class GwentGame {
       }
       // 天气
       if (weatherOnRow) p = 1;
-      // 号角（特殊牌号角 或 场上「指挥官号角」单位）
-      if (this.side[sideName].horn[row] || this._rowHasHornUnit(sideName, row)) p *= 2;
+      // 号角（特殊牌号角 / 场上「指挥官号角」单位 / 领袖号令）
+      // 领袖「整排翻倍」与号角同效，不叠加（真规则：unless a Commander's Horn is present）
+      const horned = this.side[sideName].horn[row] || this._rowHasHornUnit(sideName, row);
+      if (horned || this.doubled[sideName][row]) p *= 2;
       // 天晴抵消不掉已 buff
     }
     return p;
+  }
+
+  /** 该排是否受天气影响 */
+  _rowWeather(sideName, row) {
+    const w = this.weather;
+    return (row === 'melee' && w.frost) || (row === 'ranged' && w.fog) || (row === 'siege' && w.rain);
+  }
+
+  /** 怪物阵营被动：随机挑一张场上【己方】单位牌留到下一局（没有则返回 null） */
+  _monstersKeep(sideName) {
+    const units = [];
+    for (const r of ROWS) for (const c of this.side[sideName].rows[r]) {
+      if (!c.tomb && !c.spied) units.push(c);      // 不保留对方间谍
+    }
+    if (!units.length) return null;
+    return units[Math.floor(Math.random() * units.length)];
+  }
+
+  /** 场上牌离开 → 进坟场。注意：进坟场后 tomb 必须清掉，
+   *  否则医生/领袖复活会把「被焚风摧毁的牌」当成不可用（旧版 bug）。 */
+  _toGrave(card, sideName) {
+    card.tomb = false;
+    card.placedRow = null;
+    card._effective = null;
+    card.inGrave = true;
+    this.side[sideName].graveyard.push(card);
   }
 
   /** 该排是否存在「指挥官号角」单位（丹德里恩） */
@@ -300,6 +448,8 @@ class GwentGame {
    */
   playCard(sideName, handIndex, targetRow) {
     if (this.over) return { ok: false, error: '游戏已结束' };
+    if (this.pendingFirstPick) return { ok: false, error: '请先选择本局先手方' };
+    if (this.pendingMedic) return { ok: false, error: '请先完成医生复活选择' };
     if (this.current !== sideName) return { ok: false, error: '还没轮到你' };
     if (this.passed[sideName]) return { ok: false, error: '本局你已过牌' };
     const side = this.side[sideName];
@@ -342,14 +492,14 @@ class GwentGame {
           events.push(...this._doMuster(sideName, card, row));
         }
         // 医生(medic)：从坟场复活一张己方单位（玩家可选，AI 自动）
-        if (card.ability === 'medic' && card.medicReady !== false) {
+        if (card.ability === 'medic') {
           const mres = this._startMedic(sideName, card);
           if (mres.pending) deferTurn = true;
           else events.push(...(mres.events || []));
         }
-        // 焚风(scorch)：金龙进场时触发
+        // 焚风(scorch)：金龙进场时触发（真规则：只打对方同排最强的非英雄单位）
         if (card.ability === 'scorch') {
-          events.push(...this._triggerScorch(sideName, card));
+          events.push(...this._scorchEnemyRow(sideName, row, card));
         }
         // 鼓舞(morale)：已通过 _applyEnterBuffs 实现即时、永久生效
       }
@@ -363,62 +513,136 @@ class GwentGame {
     return { ok: true, events, pendingMedic: !!this.pendingMedic };
   }
 
-  /** 焚风效果（特殊牌与金龙共用） */
-  _triggerScorch(sideName, source) {
-    const total = this.scores.player + this.scores.ai;
-    if (total <= 10) {
-      this._log('sys', `焚风（${source.name.zh}）：全场总战力未超过 10，无效`);
+  /* =========================================================
+   * 焚风（Scorch）—— 两种口径，别混用：
+   *  1) 特殊牌「焚风」：弃置后摧毁【全场】最强的非英雄单位（含己方，并列全灭）
+   *  2) 单位焚风（金龙 Villentretenmerth / 蟾蜍 / 席鲁）与两位领袖：
+   *     若对方该排总战力 ≥ 10，摧毁该排【最强】的非英雄单位（并列全灭，不是整排）
+   *  依据：巫师3 原版卡面 + asundr/gwent-classic abilities.js（scorch / scorch_c）
+   * ========================================================= */
+  /** 特殊牌焚风：全场最强非英雄单位（含己方） */
+  _scorchBattlefield(sideName, source) {
+    this.refresh();                       // 用最新战力判定，避免使用旧缓存
+    let max = -1;
+    let cands = [];
+    for (const s of ['player', 'ai']) {
+      for (const r of ROWS) {
+        for (const c of this.side[s].rows[r]) {
+          if (c.tomb || c.type === 'hero') continue;
+          const p = this._effectivePower(c, s, r, this._rowWeather(s, r));
+          if (p > max) { max = p; cands = []; }
+          if (p === max) cands.push({ side: s, row: r, card: c });
+        }
+      }
+    }
+    if (max < 0) {
+      this._log(sideName, `焚风（${source.name.zh}）：场上没有可摧毁的非英雄单位`);
       return [];
     }
-    const victims = this._scorchTargets();
+    this._log(sideName, `焚风（${source.name.zh}）：全场最高战力 ${max}`);
+    return this._destroyUnits(cands, sideName);
+  }
+
+  /** 排焚风（金龙 / 领袖技）：对方该排总战力 ≥10 时，摧毁该排最强的非英雄单位 */
+  _scorchEnemyRow(sideName, row, source) {
+    this.refresh();
+    const enemy = this._other(sideName);
+    const total = this.rowTotal(enemy, row);          // 英雄也计入总战力
+    if (total < 10) {
+      this._log(sideName, `焚风（${source.name.zh}）：对方${ROW_CN[row]}排总战力 ${total} < 10，无效`);
+      return [];
+    }
+    const rowCards = this.side[enemy].rows[row].filter(c => !c.tomb && c.type !== 'hero');
+    if (!rowCards.length) {
+      this._log(sideName, `焚风（${source.name.zh}）：对方${ROW_CN[row]}排没有非英雄单位`);
+      return [];
+    }
+    let max = -1;
+    for (const c of rowCards) max = Math.max(max, this._effectivePower(c, enemy, row, this._rowWeather(enemy, row)));
+    const victims = rowCards.filter(c => this._effectivePower(c, enemy, row, this._rowWeather(enemy, row)) === max);
+    this._log(sideName, `焚风（${source.name.zh}）：摧毁对方${ROW_CN[row]}排最强（${max}）的 ${victims.length} 张单位`);
+    return this._destroyUnits(victims.map(c => ({ side: enemy, row, card: c })), sideName);
+  }
+
+  /** 统一的摧毁结算：离场 → 进坟场（tomb 清掉，保证可被医生复活） */
+  _destroyUnits(victims, actor) {
+    const killed = [];
     for (const v of victims) {
       const os = this.side[v.side];
       const ri = os.rows[v.row].indexOf(v.card);
-      if (ri >= 0) { os.rows[v.row].splice(ri, 1); v.card.tomb = true; v.card.placedRow = null; os.graveyard.push(v.card); }
+      if (ri < 0) continue;
+      os.rows[v.row].splice(ri, 1);
       this._removeBuffsOf(v.card, v.side, v.row);
-      this._log('sys', `焚风摧毁了「${v.card.name.zh}」`);
+      this._toGrave(v.card, v.side);
+      killed.push(v.card);
+      this._log(actor, `  摧毁了${v.side === actor ? '己方' : '对方'}「${v.card.name.zh}」`);
     }
-    return [{ type: 'scorch', victims: victims.map(v => v.card) }];
+    return killed.length ? [{ type: 'scorch', victims: killed }] : [];
+  }
+
+  /** 旧的统一入口（特殊牌焚风）：保留名字给外部调用 */
+  _triggerScorch(sideName, source) {
+    return this._scorchBattlefield(sideName, source);
   }
 
   /** 医生：开牌（玩家弹窗选择 / AI 自动选最强） */
-  _startMedic(sideName, medicCard) {
+  _startMedic(sideName, medicCard, depth) {
     const side = this.side[sideName];
+    // 真规则：己方坟场里的【单位牌】（不含英雄/特殊牌）；被焚风摧毁的牌同样可复活
     const targets = side.graveyard.filter(c =>
-      !c.tomb && c.type === 'unit' && c.owner === sideName && c.defId !== medicCard.defId
+      c.type === 'unit' && c.owner === sideName
     );
     if (!targets.length) return { events: [] };
     if (sideName === 'player') {
-      this.pendingMedic = { side: sideName, options: targets.map(t => t.uid) };
+      this.pendingMedic = { side: sideName, options: targets.map(t => t.uid), depth: depth || 0 };
       return { pending: true, events: [] };
     }
     targets.sort((a, b) => (b.power || 0) - (a.power || 0));
-    return { events: this._reviveToBoard(sideName, targets[0]) };
+    return { events: this._reviveToBoard(sideName, targets[0], depth || 0) };
   }
 
-  /** 把坟场中的单位复活到场上 */
-  _reviveToBoard(sideName, t) {
+  /** 把坟场中的单位复活到场上（复活的牌自身技能也生效：可医生连锁/召唤，带深度上限防死循环） */
+  _reviveToBoard(sideName, t, depth) {
+    depth = depth || 0;
     const side = this.side[sideName];
     const idx = side.graveyard.indexOf(t);
     if (idx < 0) return [];
     const row = this._pickRow(t, sideName, null);
     if (!row) return [];
     side.graveyard.splice(idx, 1);
-    t.owner = sideName; t.placedRow = row; t._side = sideName; t.tomb = false;
-    t.medicReady = false;              // 被复活的医生不再连锁，避免无限循环
+    t.owner = sideName; t.placedRow = row; t._side = sideName; t.tomb = false; t.inGrave = false;
+    t.spied = false;                   // 复活的间谍回到自己场上，不再是「对方场上的间谍」
     side.rows[row].push(t);
     this._applyEnterBuffs(t, sideName, row);
     this._log(sideName, `  医生复活了「${t.name.zh}」到${ROW_CN[row]}排`);
-    return [{ type: 'medic', card: t }];
+    const evs = [{ type: 'medic', card: t }];
+    // 真规则：复活的牌自身技能照样生效（医生可连锁）。深度上限防止异常结构死循环。
+    if (depth < 3) {
+      if (t.ability === 'muster') {
+        evs.push(...this._doMuster(sideName, t, row));
+      } else if (t.ability === 'medic') {
+        const r2 = this._startMedic(sideName, t, depth + 1);
+        evs.push(...(r2.events || []));
+      } else if (t.ability === 'scorch') {
+        evs.push(...this._scorchEnemyRow(sideName, row, t));
+      }
+    }
+    return evs;
   }
 
-  /** UI：医生选择目标后调用 */
+  /** UI：医生选择目标后调用（uid 必须来自本次给出的候选，防止复活对方/非候选的牌） */
   applyMedic(sideName, uid) {
     if (!this.pendingMedic || this.pendingMedic.side !== sideName) return { ok: false };
+    const depth = this.pendingMedic.depth || 0;
+    const opts = this.pendingMedic.options || [];
     this.pendingMedic = null;
     const side = this.side[sideName];
-    const t = side.graveyard.find(c => c.uid === uid && !c.tomb && c.type === 'unit');
-    if (t) this._emit(this._reviveToBoard(sideName, t));
+    const t = opts.indexOf(uid) >= 0
+      ? side.graveyard.find(c => c.uid === uid && c.type === 'unit' && c.owner === sideName)
+      : null;
+    if (t) this._emit(this._reviveToBoard(sideName, t, depth));
+    // 连锁：复活的医生若又开出新的选择，等 UI 继续处理，本轮不推进
+    if (this.pendingMedic) { this.refresh(); return { ok: true, chained: true }; }
     this._afterPlay(sideName, []);
     this.refresh();
     return { ok: true };
@@ -525,7 +749,9 @@ class GwentGame {
         side.hand.splice(side.hand.indexOf(card), 1);
         side.horn[targetRow] = true;
         side.graveyard.push(card); card.used = true;
-        this._log(sideName, `在己方${ROW_CN[targetRow]}排放置号角，该排非英雄单位 ×2`);
+        this._log(sideName, this.doubled[sideName][targetRow]
+          ? `在己方${ROW_CN[targetRow]}排放置号角，但该排已被领袖技翻倍 —— 号角没有额外效果`
+          : `在己方${ROW_CN[targetRow]}排放置号角，该排非英雄单位 ×2`);
         evs.push({ type: 'horn', row: targetRow });
         return { ok: true, events: evs };
       }
@@ -545,26 +771,10 @@ class GwentGame {
     }
   }
 
-  _scorchTargets() {
-    // 找全场最高非英雄单位战力（取 _effective）
-    let max = -1;
-    const cands = [];
-    for (const s of ['player', 'ai']) {
-      for (const r of ROWS) {
-        for (const c of this.side[s].rows[r]) {
-          if (c.tomb || c.type === 'hero') continue;
-          const p = c._effective || this._effectivePower(c, s, r, false);
-          if (p > max) { max = p; cands.length = 0; }
-          if (p === max) cands.push({ side: s, row: r, card: c });
-        }
-      }
-    }
-    return cands;
-  }
-
   /* ---------- 回合推进 / 过 ---------- */
   pass(sideName) {
     if (this.over || this.current !== sideName) return { ok: false };
+    if (this.pendingFirstPick || this.pendingMedic) return { ok: false, error: '有未完成的选择' };
     if (this.passed[sideName]) return { ok: false, error: '本局你已过牌' };
     this.passed[sideName] = true;
     this._log(sideName, `${sideName === 'player' ? '你' : '对手'}选择【过】`);
@@ -607,12 +817,28 @@ class GwentGame {
     const ps = this.scores.player, as = this.scores.ai;
     this._log('sys', `本局结算：你 ${ps} 分  VS  对手 ${as} 分`);
     if (ps === as) {
-      this.roundWinner = null;
-      this._log('sys', '本局平局，无人得分。');
+      // 尼弗迦德阵营被动：平局算尼弗迦德赢
+      const nif = ['player', 'ai'].filter(s => this.side[s].deck.faction === 'nilfgaard');
+      if (nif.length === 1) {
+        this.roundWinner = nif[0];
+        this.side[this.roundWinner].roundsWon++;
+        this._log('sys', `平局！尼弗迦德阵营被动生效 —— ${this.roundWinner === 'player' ? '你' : '对手'}赢得第 ${this.round} 局。`);
+      } else {
+        this.roundWinner = null;
+        this._log('sys', '本局平局，无人得分。');
+      }
     } else {
       this.roundWinner = ps > as ? 'player' : 'ai';
       this.side[this.roundWinner].roundsWon++;
       this._log('sys', `${this.roundWinner === 'player' ? '你' : '对手'}赢得第 ${this.round} 局！`);
+    }
+    // 北方领域阵营被动：赢下一局后抽 1 张
+    if (this.roundWinner && this.side[this.roundWinner].deck.faction === 'northern') {
+      const got = this._drawCards(this.side[this.roundWinner], 1);
+      if (got.length) {
+        this.side[this.roundWinner].hand.push(got[0]);
+        this._log(this.roundWinner, `  北方领域被动：赢下本局，抽 1 张「${got[0].name.zh}」`);
+      }
     }
     // 检查整局胜负
     this.roundHistory.push({ round: this.round, player: ps, ai: as, winner: this.roundWinner });
@@ -624,24 +850,55 @@ class GwentGame {
       this._emit([{ type: 'matchEnd', winner: this.winner }]);
       return;
     }
+    // 三局两胜：第 3 局结束后按已赢局数定胜负（正常路径下这里不会走到，
+    // 但「双方都换不出牌」时能保证对局一定收束，不会再无限空转）
+    if (this.round >= 3) { this._finishByRounds(); return; }
+    // 双方都没牌可出（手中无牌、领袖技也已用/不可用）→ 后续小局只会 0:0 空过
+    const stuck = !this._hasPlayableResources('player') && !this._hasPlayableResources('ai');
+    if (stuck) { this._finishByRounds(); return; }
     this.round++;
-    // 若双方牌堆与手牌已尽且不能再战，按轮次分判负
-    const exhausted = (s) =>
-      this.side[s].pile.length === 0 && this.side[s].hand.length === 0 &&
-      !(this.side[s].rows['melee'].length || this.side[s].rows['ranged'].length || this.side[s].rows['siege'].length);
-    if (exhausted('player') && exhausted('ai') && this.round > 1) {
-      // 极少出现；此时比 roundWon
-      if (this.side.player.roundsWon !== this.side.ai.roundsWon) {
-        this.over = true;
-        this.winner = this.side.player.roundsWon > this.side.ai.roundsWon ? 'player' : 'ai';
-        this._log('sys', `======== 牌已耗尽：${this.winner === 'player' ? '你赢了' : '对手获胜'} ========`);
-      } else {
-        this.over = true; this.winner = null;
-        this._log('sys', '双方牌库耗尽且得分相同 —— 平局。');
-      }
-      return;
-    }
     this.beginRound();
+  }
+
+  /** 收束：按已赢局数判定整局胜负（平局则 winner=null） */
+  _finishByRounds() {
+    this.over = true;
+    const pw = this.side.player.roundsWon, aw = this.side.ai.roundsWon;
+    if (pw !== aw) {
+      this.winner = pw > aw ? 'player' : 'ai';
+      this._log('sys', `======== 对局结束：${this.winner === 'player' ? '你赢了' : '对手获胜'}（${pw}:${aw}）========`);
+    } else {
+      this.winner = null;
+      this._log('sys', `======== 对局结束：${pw}:${aw} —— 平局 ========`);
+    }
+    this._emit([{ type: 'matchEnd', winner: this.winner }]);
+  }
+
+  /** 该方是否还有能出牌的手段（手牌 / 未用过且此刻有意义的领袖技） */
+  _hasPlayableResources(sideName) {
+    const side = this.side[sideName];
+    if (side.hand.length > 0) return true;
+    if (side.leaderUsed) return false;
+    const e = side.deck.leader.effect;
+    if (!e || this._leaderTargetType(side.deck.leader) === 'never') return false;
+    switch (e) {
+      case 'draw_one': case 'draw_two':
+        return side.pile.length > 0;
+      case 'deck_weather_frost': case 'deck_weather_fog': case 'deck_weather_rain':
+        return side.pile.some(c => c.type === 'special' && c.kind === 'weather' && c.weatherKey === e.split('_')[2]);
+      case 'deck_weather_any':
+        return side.pile.some(c => c.type === 'special' && c.kind === 'weather');
+      case 'revive_to_hand': case 'revive_own':
+        return side.graveyard.some(c => c.type === 'unit');
+      case 'steal_opp_discard':
+        return this.side[this._other(sideName)].graveyard.length > 0;
+      case 'take_enemy_hand':
+        return this.side[this._other(sideName)].hand.length > 0;
+      case 'cancel_opponent_leader':
+        return !this.side[this._other(sideName)].leaderUsed;
+      default:
+        return true;
+    }
   }
 
   /* ---------- 领袖技 ---------- */
@@ -654,6 +911,7 @@ class GwentGame {
   _leaderTargetType(leader) {
     if (!leader || !leader.effect) return 'never';
     const e = leader.effect;
+    if (e === 'draw_extra_first_round') return 'never';   // 被动，开局已生效，不能主动使用
     if (e === 'horn_melee' || e === 'horn_ranged' || e === 'horn_siege' ||
         e === 'double_siege' || e === 'double_ranged' || e === 'double_melee' ||
         e === 'frost_again' || e === 'fog_again' || e === 'rain_again')
@@ -663,6 +921,7 @@ class GwentGame {
 
   canUseLeader(sideName) {
     const s = this.side[sideName];
+    if (this.pendingFirstPick || this.pendingMedic) return false;
     if (s.leaderUsed || this.over || this.current !== sideName || this.passed[sideName]) return false;
     if (this._leaderTargetType(s.deck.leader) === 'never') return false;
     return true;
@@ -686,9 +945,9 @@ class GwentGame {
         evs.push({ type: 'horn', row });
         break;
       }
-      case 'double_siege': this._doubleRow(sideName, 'siege', 2); this._log(sideName, `领袖「${leader.name.zh}」攻城翻倍`); break;
-      case 'double_ranged': this._doubleRow(sideName, 'ranged', 2); this._log(sideName, `领袖「${leader.name.zh}」远程翻倍`); break;
-      case 'double_melee': this._doubleRow(sideName, 'melee', 2); this._log(sideName, `领袖「${leader.name.zh}」近战翻倍`); break;
+      case 'double_siege': this._doubleRow(sideName, 'siege'); this._log(sideName, `领袖「${leader.name.zh}」攻城翻倍`); break;
+      case 'double_ranged': this._doubleRow(sideName, 'ranged'); this._log(sideName, `领袖「${leader.name.zh}」远程翻倍`); break;
+      case 'double_melee': this._doubleRow(sideName, 'melee'); this._log(sideName, `领袖「${leader.name.zh}」近战翻倍`); break;
       case 'scorch_enemy_max': this._leaderScorchEnemy(sideName); break;
       case 'draw_one': this._drawCards(s, 1).forEach(c => s.hand.push(c)); this._log(sideName, `领袖「${leader.name.zh}」抽 1 张`); break;
       case 'draw_two': this._drawCards(s, 2).forEach(c => s.hand.push(c)); this._log(sideName, `领袖「${leader.name.zh}」抽 2 张`); break;
@@ -706,22 +965,12 @@ class GwentGame {
         } else this._log('sys', '牌组中没有对应天气牌，领袖技无效');
         break;
       }
-      /* ---- 摧毁敌方整排（条件 >10） ---- */
+      /* ---- 排焚风（条件：对方该排总战力 ≥10）----
+       * 真规则（巫师3 / asundr gwent-classic scorch_s、scorch_c）：
+       * 摧毁对方该排【最强】的非英雄单位（并列全灭），不是整排。 */
       case 'destroy_enemy_melee': case 'destroy_enemy_siege': {
         const row = e === 'destroy_enemy_melee' ? 'melee' : 'siege';
-        const enemy = this._other(sideName);
-        const total = this.rowTotal(enemy, row);
-        if (total > 10) {
-          const os = this.side[enemy];
-          const victims = os.rows[row].slice();
-          for (const c of victims) {
-            os.rows[row].splice(os.rows[row].indexOf(c), 1);
-            c.tomb = true; c.placedRow = null; os.graveyard.push(c);
-            this._removeBuffsOf(c, enemy, row);
-            this._log('sys', `领袖技摧毁了对方「${c.name.zh}」`);
-          }
-          evs.push({ type: 'scorch', victims });
-        } else this._log('sys', `对方${ROW_CN[row]}总战力未超过 10，领袖技无效`);
+        evs.push(...this._scorchEnemyRow(sideName, row, leader));
         break;
       }
       /* ---- 取消对手领袖技 ---- */
@@ -828,28 +1077,27 @@ class GwentGame {
     return { ok: true };
   }
 
-  _doubleRow(sideName, row, mult) {
-    const s = this.side[sideName];
-    for (const c of s.rows[row]) {
-      if (!c.tomb && c.type !== 'hero') c._dbl = (c._dbl || 1) * mult;
-    }
+  /** 领袖「整排翻倍」（真规则：与号角同效，不叠加 —— 见 _effectivePower） */
+  _doubleRow(sideName, row) {
+    this.doubled[sideName][row] = true;
+    const n = this.side[sideName].rows[row].filter(c => !c.tomb && c.type !== 'hero').length;
+    this._log(sideName, `  该排 ${n} 张非英雄单位战力翻倍${this.side[sideName].horn[row] ? '（该排已有号角，不叠加）' : ''}`);
   }
 
+  /** 领袖焚风（scorch_enemy_max）：摧毁对方场上最强的非英雄单位（并列全灭） */
   _leaderScorchEnemy(sideName) {
+    this.refresh();
     const enemy = this._other(sideName);
-    let max = -1, victim = null;
+    let max = -1;
+    const cands = [];
     for (const r of ROWS) for (const c of this.side[enemy].rows[r]) {
       if (c.tomb || c.type === 'hero') continue;
-      const p = c._effective || c.power;
-      if (p > max) { max = p; victim = { side: enemy, row: r, card: c }; }
+      const p = this._effectivePower(c, enemy, r, this._rowWeather(enemy, r));
+      if (p > max) { max = p; cands.length = 0; }
+      if (p === max) cands.push({ side: enemy, row: r, card: c });
     }
-    if (victim) {
-      const os = this.side[enemy];
-      os.rows[victim.row].splice(os.rows[victim.row].indexOf(victim.card), 1);
-      victim.card.tomb = true; victim.card.placedRow = null; os.graveyard.push(victim.card);
-      this._removeBuffsOf(victim.card, enemy, victim.row);
-      this._log('sys', `领袖技焚风摧毁对方「${victim.card.name.zh}」`);
-    }
+    if (cands.length) this._destroyUnits(cands, sideName);
+    else this._log(sideName, '  对方场上没有非英雄单位，领袖技无效');
   }
 
   /* ---------- 诱饵/号角需要 UI 指定目标后调用 ---------- */

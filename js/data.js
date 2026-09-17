@@ -23,7 +23,7 @@ const LEADERS = {
     { id: 'northern_foltest_king_of_temeria', name: { zh: '弗尔泰斯特·泰莫利亚之王', en: 'Foltest: King of Temeria' }, effect: 'deck_weather_fog', desc: '从牌组取出一张「蔽日浓雾」并使用' },
     { id: 'northern_foltest_lord_commander', name: { zh: '弗尔泰斯特·北方统帅', en: 'Foltest: Lord Commander of the North' }, effect: 'clear_weather', desc: '清除场上所有天气效果' },
     { id: 'northern_foltest_siegemaster', name: { zh: '弗尔泰斯特·围城大师', en: 'Foltest: The Siegemaster' }, effect: 'double_siege', desc: '己方攻城排单位战力翻倍' },
-    { id: 'northern_foltest_steel_forged', name: { zh: '弗尔泰斯特·钢铁之躯', en: 'Foltest: The Steel-Forged' }, effect: 'destroy_enemy_siege', desc: '若敌方攻城总战力超过 10，摧毁其全部攻城单位' },
+    { id: 'northern_foltest_steel_forged', name: { zh: '弗尔泰斯特·钢铁之躯', en: 'Foltest: The Steel-Forged' }, effect: 'destroy_enemy_siege', desc: '焚风：敌方攻城排总战力 ≥10 时，摧毁该排最强的非英雄单位（并列全灭）' },
   ],
   nilfgaard: [
     { id: 'nilfgaard_emhyr_his_imperial_majesty', name: { zh: '恩希尔·皇帝陛下', en: 'Emhyr var Emreis: His Imperial Majesty' }, effect: 'deck_weather_rain', desc: '从牌组取出一张「倾盆大雨」并使用' },
@@ -35,13 +35,15 @@ const LEADERS = {
     { id: 'scoiatael_francesca_pureblood_elf', name: { zh: '法兰茜丝卡·纯血精灵', en: 'Francesca Findabair: Pureblood Elf' }, effect: 'deck_weather_frost', desc: '从牌组取出一张「刺骨冰霜」并使用' },
     { id: 'scoiatael_francesca_the_beautiful', name: { zh: '法兰茜丝卡·美之化身', en: 'Francesca Findabair: The Beautiful' }, effect: 'double_ranged', desc: '己方远程排单位战力翻倍' },
     { id: 'scoiatael_francesca_daisy_of_the_valley', name: { zh: '法兰茜丝卡·溪谷雏菊', en: 'Francesca Findabair: Daisy of the Valley' }, effect: 'draw_extra_first_round', desc: '第一局开始时额外抽 1 张牌' },
-    { id: 'scoiatael_francesca_queen_of_dol_blathanna', name: { zh: '法兰茜丝卡·多尔·布雷坦纳女王', en: 'Francesca Findabair: Queen of Dol Blathanna' }, effect: 'destroy_enemy_melee', desc: '若敌方近战总战力超过 10，摧毁其全部近战单位' },
+    { id: 'scoiatael_francesca_queen_of_dol_blathanna', name: { zh: '法兰茜丝卡·多尔·布雷坦纳女王', en: 'Francesca Findabair: Queen of Dol Blathanna' }, effect: 'destroy_enemy_melee', desc: '焚风：敌方近战排总战力 ≥10 时，摧毁该排最强的非英雄单位（并列全灭）' },
   ],
   monsters: [
-    { id: 'monsters_eredin_commander_of_the_red_riders', name: { zh: '艾瑞汀·赤色骑士统帅', en: 'Eredin: Commander of the Red Riders' }, effect: 'deck_weather_any', desc: '从牌组取出一张天气牌并使用' },
-    { id: 'monsters_eredin_bringer_of_death', name: { zh: '艾瑞汀·死亡使者', en: 'Eredin: Bringer of Death' }, effect: 'discard_2_draw_1', desc: '弃掉 2 张牌，然后抽 1 张牌' },
-    { id: 'monsters_eredin_destroyer_of_worlds', name: { zh: '艾瑞汀·世界毁灭者', en: 'Eredin: Destroyer of Worlds' }, effect: 'revive_to_hand', desc: '从己方坟场取一张牌加入手牌' },
-    { id: 'monsters_eredin_king_of_the_wild_hunt', name: { zh: '艾瑞汀·狂猎之王', en: 'Eredin: King of the Wild Hunt' }, effect: 'double_melee', desc: '己方近战排单位战力翻倍' },
+    // 修正（2026-09-17）：原来 4 位领袖效果与真规则错位（赤色骑士统帅/狂猎之王 互换、死亡使者/世界毁灭者 互换）
+    // 依据：asundr/gwent-classic abilities.js（eredin_commander / eredin_bringer_of_death / eredin_destroyer / eredin_king）
+    { id: 'monsters_eredin_commander_of_the_red_riders', name: { zh: '艾瑞汀·赤色骑士统帅', en: 'Eredin: Commander of the Red Riders' }, effect: 'double_melee', desc: '己方近战排单位战力翻倍（该排已有号角时不叠加）' },
+    { id: 'monsters_eredin_bringer_of_death', name: { zh: '艾瑞汀·死亡使者', en: 'Eredin: Bringer of Death' }, effect: 'revive_to_hand', desc: '从己方坟场取一张牌加入手牌' },
+    { id: 'monsters_eredin_destroyer_of_worlds', name: { zh: '艾瑞汀·世界毁灭者', en: 'Eredin: Destroyer of Worlds' }, effect: 'discard_2_draw_1', desc: '弃掉 2 张牌，然后抽 1 张牌' },
+    { id: 'monsters_eredin_king_of_the_wild_hunt', name: { zh: '艾瑞汀·狂猎之王', en: 'Eredin: King of the Wild Hunt' }, effect: 'deck_weather_any', desc: '从牌组取出一张天气牌并使用' },
   ],
 };
 
@@ -183,7 +185,7 @@ const CARDS = {
   special: [
     { id: 'special_decoy', en: 'Decoy', zh: '诱饵', t: 'special', kind: 'decoy', icon: '🎭', n: 3, desc: '把己方场上一个非英雄单位收回手牌' },
     { id: 'special_commanders_horn', en: "Commander's Horn", zh: '指挥官号角', t: 'special', kind: 'horn', icon: '🎺', n: 3, desc: '指定己方一排：该排非英雄单位 ×2' },
-    { id: 'special_scorch', en: 'Scorch', zh: '焚风', t: 'special', kind: 'scorch', icon: '🔥', n: 3, desc: '若全场总战力 >10，摧毁双方战力最高的非英雄单位' },
+    { id: 'special_scorch', en: 'Scorch', zh: '焚风', t: 'special', kind: 'scorch', icon: '🔥', n: 3, desc: '打出后弃置：摧毁全场最强的非英雄单位（含己方，并列全灭）' },
     { id: 'special_biting_frost', en: 'Biting Frost', zh: '刺骨冰霜', t: 'special', kind: 'weather', weatherKey: 'frost', icon: '❄️', n: 3, desc: '近战排非英雄单位降为 1' },
     { id: 'special_impenetrable_fog', en: 'Impenetrable Fog', zh: '蔽日浓雾', t: 'special', kind: 'weather', weatherKey: 'fog', icon: '🌫️', n: 3, desc: '远程排非英雄单位降为 1' },
     { id: 'special_torrential_rain', en: 'Torrential Rain', zh: '倾盆大雨', t: 'special', kind: 'weather', weatherKey: 'rain', icon: '🌧️', n: 3, desc: '攻城排非英雄单位降为 1' },
@@ -199,7 +201,7 @@ const ABILITY_CN = {
   muster: '召唤：牌组中同组卡牌全部自动上场',
   morale_boost: '鼓舞：己方同行其它单位 +1 战力',
   commanders_horn: '号角：所在排己方非英雄单位 ×2',
-  scorch: '焚风：出场时摧毁全场最强非英雄单位',
+  scorch: '焚风：金龙进场时，若对方同排总战力 ≥10，摧毁该排最强的非英雄单位',
 };
 
 /* ---------------- 卡牌对象化 ---------------- */

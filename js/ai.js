@@ -80,17 +80,22 @@ class GwentAI {
     const st = this._state();
     const leader = g.side.ai.deck.leader;
 
-    // 弱 AI 很少想起来用
-    if (Math.random() > this.skill * 0.9 + 0.05) return false;
+    // 低难度「想不起来用」（弱化）；高难度封顶，强度体现在下面的条件判断上。
+    // 实测（test/difficulty-test.js，384 局固定种子）：把使用率随强度堆到 0.95 会让大师反而比困难更弱
+    // —— 这些条件是弱启发式，多用的边际收益是负的；封顶到 0.77 后大师 20%→17%（更接近困难 14%）。
+    if (Math.random() > Math.min(0.77, this.skill * 0.9 + 0.05)) return false;
 
     switch (leader.effect) {
       case 'double_siege': case 'double_ranged': case 'double_melee': {
         const row = leader.effect.split('_')[1];
-        const total = g.rowTotal('ai', row);
-        return total >= (this.skill >= 0.8 ? 10 : 14);
+        const power = this._nonHeroRowPower('ai', row);        // 翻倍收益 ≈ 该排非英雄总战力
+        if (this.skill >= 0.9) return power >= 12;
+        return g.rowTotal('ai', row) >= (this.skill >= 0.8 ? 10 : 14);
       }
       case 'horn_melee': case 'horn_ranged': case 'horn_siege': {
         const row = leader.effect.split('_')[1];
+        const power = this._nonHeroRowPower('ai', row);
+        if (this.skill >= 0.9) return power >= 10;
         return g.rowTotal('ai', row) >= (this.skill >= 0.8 ? 8 : 12);
       }
       case 'clear_weather': {
@@ -102,7 +107,15 @@ class GwentAI {
       }
       case 'destroy_enemy_melee': case 'destroy_enemy_siege': {
         const row = leader.effect === 'destroy_enemy_melee' ? 'melee' : 'siege';
-        return g.rowTotal('player', row) > (this.skill >= 0.8 ? 10 : 16);
+        // 真规则：对方该排总战力 ≥10 才能发动，且只摧毁该排最强的非英雄单位
+        // → 大师算「实际会死多少战力」，低于收益阈值就不浪费这一次领袖技
+        const enemy = 'player';
+        const total = g.rowTotal(enemy, row);
+        if (total < 10) return false;
+        const kill = this._rowScorchKill(enemy, row);
+        if (this.skill >= 0.9) return kill >= 6;
+        if (this.skill >= 0.8) return true;
+        return total >= 16;
       }
       case 'cancel_opponent_leader':
         // 对手领袖技有威胁时才值得花一回合封锁
@@ -190,20 +203,9 @@ class GwentAI {
 
   /* ---------------- 换牌 ---------------- */
   _doMulligan() {
+    // 换牌逻辑放在引擎里（aiMulligan），保证 UI/测试/无头入口行为一致
     const g = this.g;
-    const side = g.side.ai;
-    const swaps = [];
-    if (this.skill >= 0.4) {
-      // 换掉最没用的：战力低且无关键技能，且该牌在牌堆里还有同伴（保留同袍/召唤组）
-      const scored = side.hand.map((c, i) => ({ c, i, v: this._mulliganValue(c) }));
-      scored.sort((a, b) => a.v - b.v);
-      const n = Math.min(DECK_RULES.mulligan, this.skill >= 0.8 ? 2 : 1);
-      for (const s of scored.slice(0, n)) {
-        if (s.v < 5) swaps.push(s.i);
-      }
-      swaps.sort((a, b) => b - a);
-    }
-    g.doMulligan(swaps.map(i => ({ side: 'ai', index: i })));
+    g.aiMulligan();
     g.finishMulligan();
   }
 
@@ -238,10 +240,14 @@ class GwentAI {
     if (!cands.length) return null;
     cands.sort((a, b) => b.value - a.value);
 
-    // 失误率：不选最优，从前几名随机挑 / 甚至乱选
+    // 失误率：从「评分靠后的一半」里挑 —— 必须是真正的降级操作。
+    // （旧版在全部候选里随机挑，偶尔会碰巧打出更好的连招，反而让无失误的大师吃亏：
+    //   实测 576 局固定种子下大师胜率比困难还高 3~6 个百分点，见 test/difficulty-test.js）
     if (Math.random() < this.mistakeRate) {
-      if (Math.random() < 0.35) return cands[Math.floor(Math.random() * cands.length)];
-      return cands[Math.min(cands.length - 1, 1 + Math.floor(Math.random() * 2))];
+      const start = Math.max(1, Math.ceil(cands.length / 2));
+      const pool = cands.length > 1 ? cands.slice(start) : cands;
+      const use = pool.length ? pool : cands;
+      return use[Math.floor(Math.random() * use.length)];
     }
     return cands[0];
   }
@@ -271,7 +277,7 @@ class GwentAI {
       if (card.kind === 'horn') {
         let bestRow = null, bestVal = 0;
         for (const r of ROWS) {
-          if (side.horn[r]) continue;
+          if (side.horn[r] || g.doubled.ai[r]) continue;      // 已翻倍的排，号角没有额外效果
           const total = side.rows[r].filter(c => !c.tomb && c.type !== 'hero')
             .reduce((a, c) => a + (c._effective || c.power || 0), 0);
           if (total > bestVal) { bestVal = total; bestRow = r; }
@@ -293,17 +299,17 @@ class GwentAI {
         return null;
       }
       if (card.kind === 'scorch') {
-        const total = g.scores.player + g.scores.ai;
-        if (total <= 10) return null;
-        let oppMax = -1, myMax = 0;
+        // 真规则：摧毁全场最强的非英雄单位（含己方！），无 10 点门槛
+        let oppMax = -1, myMax = -1;
         for (const s of ['player', 'ai']) for (const r of ROWS) for (const c of g.side[s].rows[r]) {
           if (c.tomb || c.type === 'hero') continue;
-          const p = c._effective || c.power || 0;
+          const p = c._effective != null ? c._effective : (c.power || 0);
           if (s === 'player') oppMax = Math.max(oppMax, p); else myMax = Math.max(myMax, p);
         }
-        const net = oppMax - myMax;
-        if (oppMax >= 5 && net > 0) return { row: null, value: 30 + net * 3, type: 'scorch' };
-        return null;
+        if (oppMax < 0) return null;
+        const net = oppMax - Math.max(0, myMax);      // 己方最强也会被一起打掉
+        if (net <= 0) return null;
+        return { row: null, value: 30 + net * 3, type: 'scorch' };
       }
       return null;
     }
@@ -316,7 +322,7 @@ class GwentAI {
       return { row: this._pickRowFor(card), value: 55 + (card.power || 0) * 0.4, type: 'spy' };
     }
     if (card.ability === 'medic') {
-      const targets = side.graveyard.filter(c => !c.tomb && c.type === 'unit' && c.defId !== card.defId);
+      const targets = side.graveyard.filter(c => !c.tomb && c.type === 'unit' && c.owner === 'ai');
       if (!targets.length) return null;
       const best = targets.reduce((a, b) => ((b.power || 0) > (a.power || 0) ? b : a), targets[0]);
       return { row: this._pickRowFor(card), value: 35 + (best.power || 0) * 1.2, type: 'medic' };
@@ -351,6 +357,23 @@ class GwentAI {
   _rowWeatherHit(row) {
     const w = this.g.weather;
     return (row === 'melee' && w.frost) || (row === 'ranged' && w.fog) || (row === 'siege' && w.rain);
+  }
+
+  /** 某排非英雄单位的当前总战力（领袖「整排翻倍」/号角的实际收益） */
+  _nonHeroRowPower(sideName, row) {
+    return this.g.side[sideName].rows[row]
+      .filter(c => !c.tomb && c.type !== 'hero')
+      .reduce((a, c) => a + (c._effective != null ? c._effective : (c.power || 0)), 0);
+  }
+
+  /** 排焚风（对方该排）实际会摧毁多少战力：该排最强并列的非英雄单位之和 */
+  _rowScorchKill(enemySide, row) {
+    const g = this.g;
+    const cards = g.side[enemySide].rows[row].filter(c => !c.tomb && c.type !== 'hero');
+    if (!cards.length) return 0;
+    const val = (c) => (c._effective != null ? c._effective : (c.power || 0));
+    const max = Math.max(...cards.map(val));
+    return cards.filter(c => val(c) === max).reduce((a, c) => a + val(c), 0);
   }
 
   /** 选排：避开天气、优先有号角/同袍的排 */

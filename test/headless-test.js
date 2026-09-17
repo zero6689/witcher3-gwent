@@ -32,6 +32,7 @@ async function runOnce(playerFac, aiFac, seedLabel) {
   const actions = [];
   while (!g.over && guard++ < 600) {
     if (g.pendingMedic) { g.applyMedic('player', g.pendingMedic.options[0]); continue; }
+    if (g.pendingFirstPick) { g.applyFirstChoice(Math.random() < 0.5); continue; }
     if (g.current === 'ai') {
       const act = await ai.act();
       actions.push('AI:' + act);

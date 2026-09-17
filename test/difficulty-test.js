@@ -128,6 +128,7 @@ async function playMatch(ctx, diffKey, seed) {
   let guard = 0;
   while (!g.over && guard++ < 800) {
     if (g.pendingMedic) { g.applyMedic('player', g.pendingMedic.options[0]); continue; }
+    if (g.pendingFirstPick) { g.applyFirstChoice(false); continue; }
     if (g.current === 'ai') {
       const act = await ai.act();
       if (act === null) { if (!g.passed.ai) g.pass('ai'); else break; }
@@ -140,7 +141,7 @@ async function playMatch(ctx, diffKey, seed) {
 
 /* ---------------- 主流程 ---------------- */
 (async () => {
-  const N = 96;
+  const N = 576;
   const rows = [];
   for (const key of ['easy', 'normal', 'hard', 'master']) {
     const ctx = makeContext(20260908);          // 每档同一种子 → 牌序可比
@@ -152,7 +153,7 @@ async function playMatch(ctx, diffKey, seed) {
     rows.push({ key, zh: ctx.DIFFICULTIES[key].zh, skill: ctx.DIFFICULTIES[key].skill, wins, losses, draws, rate: wins / N });
   }
 
-  console.log('玩家使用同一套固定策略，对阵四档 AI，每档 96 局：\n');
+  console.log(`玩家使用同一套固定策略，对阵四档 AI，每档 ${N} 局：\n`);
   console.log('难度      AI强度   玩家胜   玩家负   平   胜率');
   for (const r of rows) {
     console.log(`${r.zh.padEnd(6)}  ${String(r.skill).padEnd(8)} ${String(r.wins).padEnd(8)} ${String(r.losses).padEnd(8)} ${String(r.draws).padEnd(4)} ${(r.rate * 100).toFixed(0)}%`);

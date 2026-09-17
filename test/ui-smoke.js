@@ -165,6 +165,23 @@ check('⑨ 卡面原画（本地文件）+ 音效开关按钮', () => {
   assert(btns.some(b => /音效|静音/.test(b.textContent)), '缺少音效开关按钮');
 });
 
+check('⑨b 坟场面板（双方可查）+ 战斗日志留痕', () => {
+  const btns = doc.getElementById('actionButtons').querySelectorAll('button');
+  const graveBtn = btns.find(b => /坟场/.test(b.textContent));
+  assert(graveBtn, '缺少「坟场」按钮（手机端侧栏被隐藏，必须常驻按钮）');
+  fire(graveBtn, 'click');
+  const ov = doc.getElementById('overlay');
+  assert(ov.querySelectorAll('.grave-modal').length === 1, '坟场面板未打开');
+  const tabs = ov.querySelectorAll('[data-grave]');
+  assert(tabs.length === 2, `坟场面板应有双方切换（实际 ${tabs.length}）`);
+  fire(tabs[1], 'click');                        // 切到对手坟场
+  assert(ov.querySelectorAll('.grave-modal').length === 1, '切换到对手坟场失败');
+  fire(doc.getElementById('graveClose'), 'click');
+  assert(ov._class.has('hidden'), '坟场面板未关闭');
+  const log = doc.getElementById('log');
+  assert(log && log.textContent.replace(/\s/g, '').length > 0, '战斗日志为空（对手打了什么牌必须留痕）');
+});
+
 /* ---------------- 完整对局 ---------------- */
 (async () => {
   let steps = 0;
@@ -179,6 +196,7 @@ check('⑨ 卡面原画（本地文件）+ 音效开关按钮', () => {
   try {
     while (!g.over && steps++ < 600) {
       if (g.pendingMedic) { g.applyMedic('player', g.pendingMedic.options[0]); evalIn('UI').render(); played.medic++; continue; }
+      if (g.pendingFirstPick) { g.applyFirstChoice(false); evalIn('UI').render(); continue; }
       if (g.current === 'ai') {
         const ai = new (evalIn('GwentAI'))(g, g.aiSkill);
         const act = await ai.act();

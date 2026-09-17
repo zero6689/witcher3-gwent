@@ -2,12 +2,16 @@
  * Service Worker —— 让游戏可安装、可离线
  * 策略：
  *   - 安装时预缓存应用外壳（HTML/CSS/JS/图标/盾徽）
+ *   - 页面导航：网络优先，离线回落缓存
+ *   - 脚本/样式/清单：stale-while-revalidate（先用缓存秒开，后台拉新版）
+ *     —— 否则修完 bug 老玩家会被旧 JS 缓存住（v2 的坑）
  *   - 卡面等大文件：首次访问时按需缓存（cache-first）
  *   - 音频：不预缓存，按需缓存
+ * 注意：每次发布改了 js/css，务必把 VERSION 加一。
  * ============================================================ */
 'use strict';
 
-const VERSION = 'gwent-v2';
+const VERSION = 'gwent-v3';
 const SHELL = [
   './',
   './index.html',
@@ -61,6 +65,23 @@ self.addEventListener('fetch', (e) => {
         caches.open(VERSION).then(c => c.put('./index.html', copy)).catch(() => {});
         return res;
       }).catch(() => caches.match('./index.html').then(r => r || caches.match('./')))
+    );
+    return;
+  }
+
+  // 应用外壳（脚本/样式/清单）：stale-while-revalidate —— 先出缓存，同时后台更新
+  if (/\.(?:js|css|html|webmanifest)$/i.test(url.pathname) || url.pathname.endsWith('/')) {
+    e.respondWith(
+      caches.match(req).then(hit => {
+        const fresh = fetch(req).then(res => {
+          if (res && res.status === 200 && res.type === 'basic') {
+            const copy = res.clone();
+            caches.open(VERSION).then(c => c.put(req, copy)).catch(() => {});
+          }
+          return res;
+        }).catch(() => hit);
+        return hit || fresh;
+      })
     );
     return;
   }
