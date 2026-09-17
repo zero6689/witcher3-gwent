@@ -182,6 +182,30 @@ check('⑨b 坟场面板（双方可查）+ 战斗日志留痕', () => {
   assert(log && log.textContent.replace(/\s/g, '').length > 0, '战斗日志为空（对手打了什么牌必须留痕）');
 });
 
+check('⑨c 同袍倍率角标 + 召唤数量角标', () => {
+  const g = evalIn('game');
+  // 场上放两张同袍（各 ×2），手牌留一张同袍 + 一张召唤牌
+  evalIn(`(function(){
+    const mk = (id) => { const c = makeCard(ALL_CARDS[id]); c.owner='player'; c._side='player'; return c; };
+    const a = mk('northern_blue_stripes_commando'); a.placedRow='melee'; game.side.player.rows.melee.push(a);
+    const b = mk('northern_blue_stripes_commando'); b.placedRow='melee'; game.side.player.rows.melee.push(b);
+    game.side.player.hand.push(mk('northern_blue_stripes_commando'));
+    game.side.player.hand.push(mk('monsters_vampire_bruxa'));
+    game.refresh();
+  })();`);
+  evalIn('UI').render();
+  const boardTags = doc.querySelectorAll('#playerRows .bond-tag');
+  assert(boardTags.length === 2, `场上两张同袍都应显示倍率角标（实际 ${boardTags.length}）`);
+  assert(String(boardTags[0].textContent) === '×2', `角标应显示 ×2（实际 ${boardTags[0].textContent}）`);
+  const handEl = doc.getElementById('playerHand');
+  const handBond = handEl.querySelectorAll('.bond-tag');
+  const handMuster = handEl.querySelectorAll('.muster-tag');
+  assert(handBond.length >= 1, `手牌的同袍角标未显示（实际 ${handBond.length}）`);
+  assert(String(handBond[0].textContent) === '×3', `手牌同袍应提示 ×3（实际 ${handBond[0].textContent}）`);
+  assert(handMuster.length >= 1, `手牌的召唤角标未显示（实际 ${handMuster.length}）`);
+  assert(/^🧲\d+$/.test(String(handMuster[0].textContent)), '召唤角标应显示牌堆里的同组张数');
+});
+
 /* ---------------- 完整对局 ---------------- */
 (async () => {
   let steps = 0;

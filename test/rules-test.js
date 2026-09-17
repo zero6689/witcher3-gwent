@@ -45,14 +45,21 @@ function give(g, side, defId) {
   g.side[side].hand.push(c);
   return c;
 }
-/** 直接往场上放一张单位 */
-function put(g, side, defId, row, power) {
+/** 直接往场上放一张单位（enter=true 时走一次进场结算，用于鼓舞测试） */
+function put(g, side, defId, row, power, enter) {
   const c = makeCard(ALL_CARDS[defId]);
   if (power != null) c.power = power;
   c.owner = side; c._side = side; c.placedRow = row;
   g.side[side].rows[row].push(c);
+  if (enter) g._applyEnterBuffs(c, side, row);
   g.refresh();
   return c;
+}
+/** 清掉某方牌堆/手牌里的某个召唤组（测试里避免自动组牌混入同组牌） */
+function clearGroup(g, side, group) {
+  const inGroup = (c) => (c.mg || c.defId) === group;
+  g.side[side].pile = g.side[side].pile.filter(c => !inGroup(c));
+  g.side[side].hand = g.side[side].hand.filter(c => !inGroup(c));
 }
 /** 把一张牌直接放进坟场（模拟被摧毁/阵亡） */
 function bury(g, side, defId, power, tomb) {
@@ -396,6 +403,153 @@ console.log('\n===== 14. 医生只能复活本次候选里的己方单位 ====='
   check(!onRow(g, 'player', 'melee', his.uid) && !onRow(g, 'player', 'ranged', his.uid) && !onRow(g, 'player', 'siege', his.uid),
     '非法 uid 不会把对方的牌复活到自己场上');
   check(opts.length > 0, '合法候选仍存在');
+}
+
+console.log('\n===== 15. 同袍：n 张同名同排 → 每张 ×n（合计 ×n²） =====');
+{
+  const g = fresh('northern', 'monsters');
+  begin(g);
+  g.current = 'player';
+  const powerOf = (uid) => {
+    const c = g.side.player.rows.melee.find(x => x.uid === uid);
+    return c ? c._effective : null;
+  };
+  const a = put(g, 'player', 'northern_blue_stripes_commando', 'melee', 4);
+  eq(powerOf(a.uid), 4, '1 张 → 4');
+  const b = put(g, 'player', 'northern_blue_stripes_commando', 'melee', 4);
+  eq(powerOf(a.uid), 8, '2 张 → 每张 8');
+  eq(powerOf(b.uid), 8, '2 张 → 新来的也是 8');
+  eq(g.rowTotal('player', 'melee'), 16, '2 张合计 16（×2²）');
+  const c3 = put(g, 'player', 'northern_blue_stripes_commando', 'melee', 4);
+  eq(powerOf(a.uid), 12, '3 张 → 每张 12');
+  eq(powerOf(c3.uid), 12, '3 张 → 第三张也是 12');
+  eq(g.rowTotal('player', 'melee'), 36, '3 张合计 36（×3²）');
+  // 号角在同袍倍率之后
+  g.side.player.horn.melee = true;
+  g.refresh();
+  eq(powerOf(a.uid), 24, '号角再 ×2 → 24');
+  eq(g.rowTotal('player', 'melee'), 72, '号角后合计 72');
+  g.side.player.horn.melee = false;
+  // 天气按卡面字面最后覆盖为 1
+  g.weather.frost = true;
+  g.refresh();
+  eq(g.rowTotal('player', 'melee'), 3, '冰霜把该排三张同袍全降为 1（合计 3）');
+  g.weather.frost = false;
+  g.refresh();
+}
+{
+  // 不同排不互相加成
+  const g = fresh('northern', 'monsters');
+  begin(g);
+  g.current = 'player';
+  const x = put(g, 'player', 'northern_blue_stripes_commando', 'melee', 4);
+  const y = put(g, 'player', 'northern_blue_stripes_commando', 'ranged', 4);   // 人为放到另一排
+  g.refresh();
+  eq(x._effective, 4, '近战排 1 张 → 4');
+  eq(y._effective, 4, '远程排 1 张 → 4（不跨排加成）');
+}
+
+console.log('\n===== 16. 同袍 × 鼓舞：倍率先算、鼓舞后加 =====');
+{
+  const g = fresh('northern', 'monsters');
+  begin(g);
+  g.current = 'player';
+  const a = put(g, 'player', 'northern_blue_stripes_commando', 'melee', 4);
+  put(g, 'player', 'northern_blue_stripes_commando', 'melee', 4);
+  put(g, 'player', 'northern_blue_stripes_commando', 'melee', 4);
+  // 放一个鼓舞单位（米尔瓦，本为远程；这里人为放到近战排）
+  const moral = makeCard(ALL_CARDS['scoiatael_milva']);
+  moral.row = 'melee'; moral.owner = 'player'; moral._side = 'player'; moral.placedRow = 'melee';
+  g.side.player.rows.melee.push(moral);
+  g._applyEnterBuffs(moral, 'player', 'melee');
+  g.refresh();
+  eq(a._effective, 13, '同袍 4×3=12，再 +1 鼓舞 = 13（不是 (4+1)×3=15）');
+  eq(g.rowTotal('player', 'melee'), 13 * 3 + 10, '该排合计 39 + 米尔瓦 10');
+}
+{
+  // 多个鼓舞单位叠加 +2（旧版只 +1）
+  const g = fresh('northern', 'monsters');
+  begin(g);
+  g.current = 'player';
+  put(g, 'player', 'northern_kaedweni_siege_expert', 'siege', 1, true);
+  put(g, 'player', 'northern_kaedweni_siege_expert', 'siege', 1, true);
+  const ballista = put(g, 'player', 'northern_ballista', 'siege', 6, true);
+  g.refresh();
+  eq(ballista.buff, 2, '两个鼓舞单位 → 新进场单位 +2');
+  eq(ballista._effective, 8, '6 + 2 = 8');
+}
+{
+  // 英雄不接收鼓舞，但英雄鼓舞单位仍然给本排 +1（凯兰：英雄 + 鼓舞）
+  const g = fresh('monsters', 'northern');
+  begin(g);
+  g.current = 'player';
+  const kayran = makeCard(ALL_CARDS['monsters_kayran']);
+  kayran.owner = 'player'; kayran._side = 'player'; kayran.placedRow = 'melee';
+  g.side.player.rows.melee.push(kayran);
+  g._applyEnterBuffs(kayran, 'player', 'melee');
+  const u = put(g, 'player', 'monsters_arachas', 'melee', 4, true);
+  g.refresh();
+  eq(u.buff, 1, '英雄鼓舞单位也给本排 +1');
+  eq(u._effective, 5, '4 + 1 = 5');
+  eq(kayran._effective, 8, '英雄自身不吃鼓舞（仍是 8）');
+}
+
+console.log('\n===== 17. 召唤：只从牌堆拉同组牌，手上的不动 =====');
+{
+  const g = fresh('monsters', 'northern');
+  begin(g);
+  g.current = 'player';
+  clearGroup(g, 'player', 'vampire');            // 自动组牌里本来就有吸血鬼，先清干净
+  for (const id of ['monsters_vampire_bruxa', 'monsters_vampire_ekimmara', 'monsters_vampire_fleder',
+                    'monsters_vampire_garkain', 'monsters_vampire_katakan']) {
+    const c = makeCard(ALL_CARDS[id]);
+    c.owner = 'player';
+    g.side.player.pile.push(c);
+  }
+  const handA = give(g, 'player', 'monsters_vampire_bruxa');
+  const handB = give(g, 'player', 'monsters_vampire_fleder');
+  const played = give(g, 'player', 'monsters_vampire_ekimmara');
+  const handBefore = g.side.player.hand.length;
+  const res = g.playCard('player', g.side.player.hand.indexOf(played), 'melee');
+  check(res.ok, '打出吸血鬼（召唤）');
+  const field = g.side.player.rows.melee.map(c => c.defId);
+  eq(field.filter(id => id === 'monsters_vampire_bruxa').length, 1, '牌堆里的布鲁萨被召唤上场');
+  eq(field.filter(id => id === 'monsters_vampire_katakan').length, 1, '牌堆里的卡塔坎（5 战力）也被召唤');
+  eq(field.filter(c => c.startsWith('monsters_vampire_')).length, 6, '打出的 1 张 + 牌堆里的 5 张 = 场上 6 张同组牌');
+  check(g.side.player.hand.some(c => c.uid === handA.uid), '手上的布鲁萨没有被召唤（仍在手牌）');
+  check(g.side.player.hand.some(c => c.uid === handB.uid), '手上的弗莱德也没有被召唤');
+  eq(g.side.player.pile.filter(c => (c.mg || c.defId) === 'vampire').length, 0, '牌堆里的同组牌已被拉空');
+  eq(g.side.player.hand.length, handBefore - 1, '手牌只少了打出的那一张');
+}
+{
+  // 牌堆没有同组牌：不报错
+  const g = fresh('monsters', 'northern');
+  begin(g);
+  g.current = 'player';
+  clearGroup(g, 'player', 'nekker');
+  const n = give(g, 'player', 'monsters_nekker');
+  const res = g.playCard('player', g.side.player.hand.indexOf(n), 'melee');
+  check(res.ok, '牌堆无同组牌时召唤不报错');
+  eq(g.side.player.rows.melee.filter(c => c.defId === 'monsters_nekker').length, 1, '只有打出的那一张在场');
+}
+{
+  // 医生复活的召唤牌会再次触发召唤
+  const g = fresh('monsters', 'northern');
+  begin(g);
+  g.current = 'player';
+  clearGroup(g, 'player', 'vampire');
+  const dead = bury(g, 'player', 'monsters_vampire_bruxa', 4, false);
+  for (const id of ['monsters_vampire_katakan', 'monsters_vampire_garkain']) {
+    const c = makeCard(ALL_CARDS[id]);
+    c.owner = 'player';
+    g.side.player.pile.push(c);
+  }
+  const medic = give(g, 'player', 'northern_dun_banner_medic');
+  g.playCard('player', g.side.player.hand.indexOf(medic), 'siege');
+  if (g.pendingMedic) g.applyMedic('player', dead.uid);
+  g.refresh();
+  check(onRow(g, 'player', 'melee', dead.uid), '复活的吸血鬼上场');
+  eq(g.side.player.rows.melee.filter(c => (c.mg || c.defId) === 'vampire').length, 3, '复活后再次召唤出牌堆里的同组牌（共 3 张）');
 }
 
 console.log(`\n结果：${pass} 通过 / ${fail} 失败`);

@@ -332,22 +332,6 @@ class GwentGame {
     return card.row === row;
   }
 
-  /** 计算某个卡在某排的原始战力（不含天气/号角），同袍在此结算 */
-  rawPower(card, sideName, row) {
-    let p = card.power || 0;
-    if (card.ability === 'tight_bond' && card.type === 'unit') {
-      const rowCards = this.side[sideName].rows[row];
-      const n = rowCards.filter(c => c.defId === card.defId && !c.tomb).length;
-      // 至少自身 1 张
-      if (this.tightMode === 'double') {
-        if (n >= 2) p = p * 2;
-      } else { // n² 模式：n 张 → 每张贡献 = base×n
-        p = p * n;
-      }
-    }
-    return p;
-  }
-
   /** 该排最终战力（考虑号角/天气/士气等已经过 buff 后做一次性求值） */
   rowTotal(sideName, row) {
     const side = this.side[sideName];
@@ -365,18 +349,20 @@ class GwentGame {
     return total;
   }
 
-  /** 单卡最终战力 */
+  /** 单卡最终战力
+   *  结算顺序（依据 asundr/gwent-classic `Row.calcCardScore` + 巫师3 卡面）：
+   *    同袍倍率 → 鼓舞 +N → 天气覆盖为 1 → 号角/领袖翻倍
+   *  即：同袍先把基础战力按同排同名张数放大，鼓舞是「加算」的 +1/每个鼓舞单位，
+   *  天气按卡面字面把该排战力「降为 1」，号角最后翻倍。 */
   _effectivePower(card, sideName, row, weatherOnRow) {
     let p = card.power || 0;
     const isHero = card.type === 'hero';
     if (!isHero) {
-      // 鼓舞/士气 buff 已经在出牌时写入 card.buff
+      // 同袍（n² 模式：n 张同名同排 → 每张 ×n，总战力 ×n²；可用 tightBondPowerOf='double' 切成 ×2）
+      const bond = this.bondCount(sideName, card, row);
+      if (bond > 1) p *= bond;
+      // 鼓舞/士气：每个同排鼓舞单位 +1（加算在倍率之后）
       if (card.buff) p += card.buff;
-      // 同袍
-      if (card.ability === 'tight_bond' && card.type === 'unit') {
-        const n = this.side[sideName].rows[row].filter(c => c.defId === card.defId && !c.tomb).length;
-        p = this.tightMode === 'double' ? (n >= 2 ? p * 2 : p) : p * n;
-      }
       // 天气
       if (weatherOnRow) p = 1;
       // 号角（特殊牌号角 / 场上「指挥官号角」单位 / 领袖号令）
@@ -386,6 +372,31 @@ class GwentGame {
       // 天晴抵消不掉已 buff
     }
     return p;
+  }
+
+  /** 同袍倍率：同排同名（defId）张数；非同级牌 / 不同排不互相加成 */
+  bondCount(sideName, card, row) {
+    if (!(card.ability === 'tight_bond' && card.type === 'unit')) return 1;
+    const n = this.side[sideName].rows[row].filter(c => c.defId === card.defId && !c.tomb).length;
+    if (this.tightMode === 'double') return n >= 2 ? 2 : 1;
+    return Math.max(1, n);
+  }
+
+  /** 召唤组名（缺省用 defId = 同名） */
+  musterGroup(card) { return card.mg || card.defId; }
+
+  /** 召唤：该组还在【牌堆】里的张数（真规则：只从牌堆召唤，手上的不会自动上场） */
+  musterDeckCount(sideName, card) {
+    if (card.ability !== 'muster') return 0;
+    const g = this.musterGroup(card);
+    return this.side[sideName].pile.filter(c => c.type === 'unit' && this.musterGroup(c) === g).length;
+  }
+
+  /** 召唤：该组在【手牌】里的张数（仅供 UI 提示：这些不会被召唤） */
+  musterHandCount(sideName, card) {
+    if (card.ability !== 'muster') return 0;
+    const g = this.musterGroup(card);
+    return this.side[sideName].hand.filter(c => c !== card && c.type === 'unit' && this.musterGroup(c) === g).length;
   }
 
   /** 该排是否受天气影响 */
@@ -487,6 +498,12 @@ class GwentGame {
         this._log(sideName, `打出「${card.name.zh}」到${ROW_CN[row]}排`);
         events.push({ type: 'unit', card, side: sideName });
 
+        // 同袍(tight_bond)：日志里说明这一手把该排同名牌放大到几倍
+        if (card.ability === 'tight_bond') {
+          const n = this.bondCount(sideName, card, row);
+          if (n > 1) this._log(sideName, `  同袍：${ROW_CN[row]}排现有 ${n} 张「${card.name.zh}」，每张战力 ×${n}（合计 ${(card.power || 0) * n * n}）`);
+          else this._log(sideName, `  同袍：该排暂时只有 1 张「${card.name.zh}」，同名越多每张越强`);
+        }
         // 召唤(muster)：牌组中同组卡牌全部自动打出（各归其排）
         if (card.ability === 'muster') {
           events.push(...this._doMuster(sideName, card, row));
@@ -669,23 +686,26 @@ class GwentGame {
     return best;
   }
 
-  /** 单位进场结算：鼓舞 buff 即时写入其它单位 */
+  /** 单位进场结算：鼓舞 buff 即时写入其它单位
+   *  - 英雄鼓舞单位（伊森格林 / 凯兰）同样给本排 +1（敌人免疫的是「被加成」而不是「加成别人」）
+   *  - 多个鼓舞单位叠加：每个 +1
+   *  - 英雄不接收鼓舞加成（与参考实现 calcCardScore 的 `if (card.hero) return total` 一致） */
   _applyEnterBuffs(newCard, sideName, row) {
     const side = this.side[sideName];
-    if (newCard.ability === 'morale_boost' && newCard.type === 'unit') {
+    if (newCard.ability === 'morale_boost') {
+      // 新来的鼓舞单位 → 给本排其它非英雄单位各 +1
       for (const c of side.rows[row]) {
         if (c === newCard || c.tomb || c.type === 'hero') continue;
         c.buff = (c.buff || 0) + 1;
       }
-    } else {
-      // 若是普通单位进场，检查同行是否有鼓舞单位给它 buff
+    } else if (newCard.type !== 'hero') {
+      // 普通单位进场 → 本排每个鼓舞单位各给它 +1（旧版遇到第一个就 break，导致两个鼓舞只加 1）
+      let n = 0;
       for (const c of side.rows[row]) {
         if (c === newCard || c.tomb) continue;
-        if (c.ability === 'morale_boost') {
-          if (newCard.type !== 'hero') newCard.buff = (newCard.buff || 0) + 1;
-          break;
-        }
+        if (c.ability === 'morale_boost') n++;
       }
+      if (n) newCard.buff = (newCard.buff || 0) + n;
     }
   }
 
@@ -700,22 +720,31 @@ class GwentGame {
     }
   }
 
-  /** 召唤：牌堆内同组（mg，缺省同名）单位全部拉出，各归其合法排 */
+  /** 召唤：牌堆内同组（mg，缺省同名）单位全部拉出，各归其合法排
+   *  真规则（巫师3 卡面「Find any cards with the same name in your deck and play them instantly」）：
+   *  只从【牌堆】召唤，手上的同组牌不会自动上场。 */
   _doMuster(sideName, origin, row) {
     const side = this.side[sideName];
-    const group = origin.mg || origin.defId;
+    const group = this.musterGroup(origin);
     const evs = [];
+    let power = 0;
     for (let i = side.pile.length - 1; i >= 0; i--) {
       const c = side.pile[i];
-      if ((c.mg || c.defId) !== group || c.type !== 'unit') continue;
+      if (this.musterGroup(c) !== group || c.type !== 'unit') continue;
       side.pile.splice(i, 1);
       c.owner = sideName; c._side = sideName;
       const r = this._pickRow(c, sideName, null) || row;
       c.placedRow = r;
       side.rows[r].push(c);
       this._applyEnterBuffs(c, sideName, r);
+      power += c.power || 0;
       evs.push({ type: 'muster', card: c });
-      this._log(sideName, `  召唤：「${c.name.zh}」自动上场`);
+      this._log(sideName, `  召唤：「${c.name.zh}」自动上场到${ROW_CN[r]}排`);
+    }
+    if (evs.length) {
+      this._log(sideName, `召唤结算：从牌堆拉出 ${evs.length} 张同组牌（基础战力和 ${power}）`);
+    } else {
+      this._log(sideName, `召唤：牌堆里没有可召唤的同组牌`);
     }
     return evs;
   }

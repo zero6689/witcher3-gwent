@@ -510,6 +510,15 @@ const UI = {
       power: c._effective != null ? c._effective : (c.power || 0),
       badges: cardBadges(c).concat(c.spied ? [{ icon: '🕵', cls: 'spy', title: '间谍（在对方场上）' }] : []),
     });
+    // 同袍倍率角标：让玩家一眼看出这张牌为什么是 12 而不是 4
+    const bond = this.g.bondCount(sideName, c, row);
+    if (bond > 1) {
+      const tag = document.createElement('span');
+      tag.className = 'bond-tag';
+      tag.textContent = '×' + bond;
+      tag.title = `同袍：本排 ${bond} 张同名，每张战力 ×${bond}`;
+      div.appendChild(tag);
+    }
     div._card = c;
     this._bindPreview(div, c);
     // 诱饵/收回目标：允许点击
@@ -532,7 +541,46 @@ const UI = {
     const type = card.type || card.t;
     host.className = 'card-preview' + (type === 'hero' ? ' hero' : '') + (type === 'special' ? ' special-card' : '');
     host.innerHTML = cardFaceHtml(card, { eager: true, power: card._effective != null ? card._effective : undefined });
+    const hint = this._cardHint(card);
+    host.title = hint ? hint.title : (card.name ? card.name.zh : '');
     host.classList.add('show');
+  },
+
+  /** 同袍/召唤的可见提示（手牌与预览用）：返回 {cls, text, title} */
+  _cardHint(card) {
+    const g = this.g;
+    if (!g || !card) return null;
+    const side = 'player';
+    if (card.ability === 'tight_bond') {
+      const rows = card.row === 'agile' ? ['melee', 'ranged']
+        : (Array.isArray(card.rows) ? card.rows : [card.row]);
+      let best = 1;
+      for (const r of rows) {
+        if (!g.cardFitsRow(card, r)) continue;
+        const same = g.side[side].rows[r].filter(x => !x.tomb && x.defId === card.defId).length;
+        const n = same + 1;                                  // 算上手上这一张
+        best = Math.max(best, g.tightMode === 'double' ? (n >= 2 ? 2 : 1) : n);
+      }
+      const one = card.power || 0;
+      if (best <= 1) return null;                            // 只有 1 张时不显示角标（卡面已有 🤝 徽记）
+      return {
+        cls: 'bond-tag',
+        text: '×' + best,
+        title: `同袍：上场后本排 ${best} 张同名，每张 ${one} → ${one * best}（该排合计 ${one * best * best}）`,
+      };
+    }
+    if (card.ability === 'muster') {
+      const deck = g.musterDeckCount(side, card);
+      const hand = g.musterHandCount(side, card);
+      return {
+        cls: 'muster-tag',
+        text: '🧲' + deck,
+        title: `召唤：牌堆里 ${deck} 张同组牌会一起上场`
+          + (hand ? `（手上另有 ${hand} 张，不会自动上场）` : '')
+          + (deck ? '' : '（牌堆里已没有同组牌）'),
+      };
+    }
+    return null;
   },
 
   hidePreview() {
@@ -573,7 +621,17 @@ const UI = {
       d.innerHTML = cardFaceHtml(c, { eager: true, power: c.power != null ? c.power : 0 });
       d._card = c;
       this._bindPreview(d, c);
-      d.title = c.desc ? `${c.name.zh}：${c.desc}` : c.name.zh;
+      // 同袍/召唤角标：出牌前就能看到「同袍能叠到几倍 / 牌堆里还有几张会一起上场」
+      const hint = this._cardHint(c);
+      if (hint) {
+        const tag = document.createElement('span');
+        tag.className = hint.cls;
+        tag.textContent = hint.text;
+        d.appendChild(tag);
+        d.title = hint.title;
+      } else {
+        d.title = c.desc ? `${c.name.zh}：${c.desc}` : c.name.zh;
+      }
       d.addEventListener('click', () => this.onHandClick(i));
       hand.appendChild(d);
     }
