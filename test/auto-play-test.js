@@ -47,7 +47,7 @@ fire(doc.getElementById('overlay').querySelectorAll('.fc').find(e => e.dataset.f
 fire(doc.getElementById('overlay').querySelectorAll('.diff-card').find(e => e.dataset.diff === 'normal'), 'click');
 fire(doc.getElementById('overlay').querySelectorAll('[data-act]').find(e => e.dataset.act === 'auto'), 'click');
 fire(doc.getElementById('overlay').querySelectorAll('[data-act]').find(e => e.dataset.act === 'start'), 'click');
-fire(doc.getElementById('mullNone'), 'click');
+fire(doc.getElementById('mullConfirm'), 'click');
 
 const g = evalIn('game');
 const UI = evalIn('UI');
@@ -113,21 +113,24 @@ function handEl(i) {
     }
   }
 
-  /* ---- 2. 敏捷单位：自动选排（近战或远程） ---- */
+  /* ---- 2. 敏捷单位：由玩家选排（真规则；旧版自动挑一排） ---- */
   await ensurePlayerTurn();
   {
     const card = inject('scoiatael_dol_blathanna_scout');   // 敏捷 6
     clickUid(card.uid);
-    const inMelee = g.side.player.rows.melee.some(c => c.uid === card.uid && !c.tomb);
+    const notYet = !ROWS.some(r => g.side.player.rows[r].some(c => c.uid === card.uid && !c.tomb));
+    if (notYet) ok('敏捷单位不会自作主张落位（等玩家选排）'); else bad('敏捷单位擅自落位了');
+    if (UI.targetMode === 'row-for-unit') ok('进入「选排」模式'); else bad(`未进入选排模式（${UI.targetMode}）`);
+    const rowEl = doc.getElementById('playerRows').querySelectorAll('.row').find(e => e.dataset.row === 'ranged');
+    fire(rowEl, 'click');
     const inRanged = g.side.player.rows.ranged.some(c => c.uid === card.uid && !c.tomb);
-    if (inMelee || inRanged) ok(`敏捷「${card.name.zh}」自动落到 ${inMelee ? '近战' : '远程'} 排`);
-    else bad(`敏捷「${card.name.zh}」未落位`);
+    if (inRanged) ok('点「远程」排 → 落在玩家选的远程排'); else bad('敏捷单位未落到玩家选的排');
   }
 
-  /* ---- 3. 间谍：自动打到对方场上，自己抽牌 ---- */
+  /* ---- 3. 间谍：固定排 → 点一下自动打到对方场上，自己抽牌 ---- */
   await ensurePlayerTurn();
   {
-    const card = inject('northern_sigismund_dijkstra');      // 间谍
+    const card = inject('northern_sigismund_dijkstra');      // 间谍（近战排固定）
     const handBefore = g.side.player.hand.length;
     clickUid(card.uid);
     const onEnemy = ROWS.some(r => g.side.ai.rows[r].some(c => c.uid === card.uid && !c.tomb));
@@ -143,13 +146,40 @@ function handEl(i) {
     if (g.weather.frost) ok(`天气「${card.name.zh}」点一下直接生效`); else bad('天气牌未生效');
   }
 
-  /* ---- 5. 号角：自动放到收益最大的排 ---- */
+  /* ---- 5. 号角：由玩家选排（真规则；旧版自动挑一排） ---- */
   await ensurePlayerTurn();
   {
     const card = inject('special_commanders_horn');
     clickUid(card.uid);
+    if (UI.targetMode === 'row-for-horn') ok('号角等玩家选排（不再自动挑排）'); else bad(`号角未进入选排模式（${UI.targetMode}）`);
+    const rowEl = doc.getElementById('playerRows').querySelectorAll('.row').find(e => e.dataset.row === 'siege');
+    fire(rowEl, 'click');
     const horned = ROWS.filter(r => g.side.player.horn[r]);
-    if (horned.length === 1) ok(`号角自动放到 ${horned[0]} 排`); else bad(`号角未自动落位（horned=${horned.length}）`);
+    if (horned.length === 1 && horned[0] === 'siege') ok('号角落在玩家选的攻城排'); else bad(`号角未落到所选排（horned=${horned.join('/')}）`);
+  }
+
+  /* ---- 5b. 诱饵：点卡进选目标模式，选场上单位 → 收回手牌（旧版 UI 不走引擎 = 永远失败） ---- */
+  await ensurePlayerTurn();
+  {
+    const target = makeCard(ALL_CARDS['northern_blue_stripes_commando']);
+    target.owner = 'player'; target._side = 'player'; target.placedRow = 'melee';
+    g.side.player.rows.melee.push(target);
+    g.refresh();
+    UI.render();
+    {
+      const card = inject('special_decoy');
+      clickUid(card.uid);
+      if (UI.targetMode === 'decoy' && g.pendingDecoy) ok('诱饵进入选目标模式且引擎已挂起 pendingDecoy');
+      else bad(`诱饵未挂起（targetMode=${UI.targetMode}，pendingDecoy=${!!g.pendingDecoy}）`);
+      const el = doc.getElementById('playerRows').querySelectorAll('.card').find(e => String(e.dataset.uid) === String(target.uid));
+      if (!el) bad('找不到可点选的目标卡元素');
+      else {
+        fire(el, 'click');
+        const back = g.side.player.hand.some(c => c.uid === target.uid);
+        if (back) ok(`诱饵把「${target.name.zh}」收回手牌`); else bad('诱饵没有收回单位');
+        if (!g.pendingDecoy && !UI.targetMode) ok('挂起状态与选目标模式都已清空'); else bad('诱饵完成后状态没清干净');
+      }
+    }
   }
 
   /* ---- 6. 出牌展示：点击后先在中央停留，随后才落位 ---- */
@@ -168,8 +198,8 @@ function handEl(i) {
     UI.showcaseMs = 0;
   }
 
-  /* ---- 7. 全程无需点击任何排 ---- */
-  ok('以上全部通过点击手牌完成，未调用任何选排交互');
+  /* ---- 7. 结论 ---- */
+  ok('固定排单位点一下即落位；敏捷/号角由玩家点排决定（真规则）');
 
   console.log(fail ? `\n${fail} 项未通过` : '\n全部通过');
   process.exit(fail ? 1 : 0);

@@ -11,7 +11,7 @@
  * ============================================================ */
 'use strict';
 
-const VERSION = 'gwent-v4';
+const VERSION = 'gwent-v5';
 const SHELL = [
   './',
   './index.html',

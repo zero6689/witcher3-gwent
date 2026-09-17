@@ -34,7 +34,11 @@ const eq = (a, b, m) => check(a === b, `${m}（期望 ${JSON.stringify(b)}，实
 function fresh(pFac = 'monsters', aFac = 'northern', opts = {}) {
   const pDeck = buildCustomDeck(pFac, opts.pLeader || LEADERS[pFac][0].id, opts.pPicks || autoPicks(pFac));
   const aDeck = buildCustomDeck(aFac, opts.aLeader || LEADERS[aFac][0].id, opts.aPicks || autoPicks(aFac));
-  const g = new GwentGame({ playerDeck: pDeck, aiDeck: aDeck, playerFirst: true, aiSkill: opts.aiSkill == null ? 0.8 : opts.aiSkill });
+  const g = new GwentGame({
+    playerDeck: pDeck, aiDeck: aDeck, playerFirst: true,
+    aiSkill: opts.aiSkill == null ? 0.8 : opts.aiSkill,
+    options: opts.options,
+  });
   g.start();
   return g;
 }
@@ -93,19 +97,46 @@ console.log('\n===== 1. 小局之间不抽牌 =====');
   eq(g.side.ai.pile.length, aPile, 'AI 牌堆不变');
 }
 
-console.log('\n===== 2. 开局调度（换牌） =====');
+console.log('\n===== 2. 开局调度：逐张换牌，换掉的牌本次绝不会再抽到 =====');
 {
+  // 真规则（玩家反馈 #1）：选一张不要的牌 → 立刻重抽一张；最多 2 次；
+  // 换掉的牌先放在一边（不在牌堆里）→ 调度期间抽不到它；全部换完后才洗回牌堆。
   const g = fresh('northern', 'monsters');
   const before = g.side.player.hand.map(c => c.uid);
   const pileBefore = g.side.player.pile.length;
-  g.doMulligan([{ side: 'player', index: 0 }, { side: 'player', index: 1 }, { side: 'player', index: 2 }]);
+  const r1 = g.mulliganSwap('player', 0);
+  check(r1.ok, '第 1 次换牌成功');
   eq(g.side.player.hand.length, 10, '换牌后仍是 10 张');
-  eq(g.side.player.pile.length, pileBefore, '牌堆张数不变（换回 → 洗回 → 再抽）');
-  eq(g.side.player.pile.filter(c => c.uid === before[0]).length, 1, '换回的牌回到牌堆');
-  check(!g.side.player.hand.some(c => c.uid === before[0]), '换回的牌没有留在手里');
-  eq(g.side.player.pile.filter(c => before.slice(0, 3).includes(c.uid)).length, 2, '最多只换 2 张（第 3 张未被换出）');
+  check(!g.side.player.hand.some(c => c.uid === before[0]), '换掉的牌没有留在手里');
+  check(!!r1.in && g.side.player.hand.some(c => c.uid === r1.in.uid), '立刻重抽了一张（旧版是勾完再一起抽）');
+  eq(g.side.player.pile.length, pileBefore - 1, '换掉的牌此刻不在牌堆里（所以本次抽不到它）');
+  const r2 = g.mulliganSwap('player', 0);
+  check(r2.ok, '第 2 次换牌成功');
+  const r3 = g.mulliganSwap('player', 0);
+  check(!r3.ok, '第 3 次换牌被拒绝（每局最多 2 张）');
+  eq(g.mulliganUsed.player, 2, '换牌次数累计为 2');
+  const aside = g.mulliganSetAside.player.map(c => c.uid);
+  eq(aside.length, 2, '两张换掉的牌被放在一边');
+  check(aside.includes(before[0]), '第 1 张换掉的牌就在"一边"里（不在牌堆、不在手牌）');
   g.aiMulligan();
   check(g.aiMulliganDone === true, 'AI 也执行了换牌流程');
+  g.finishMulligan();
+  check(!g.needMulligan, '调度阶段已结束');
+  eq(g.side.player.pile.length, pileBefore, '调度结束后牌堆张数恢复（换掉的牌洗回牌堆）');
+  eq(g.side.player.pile.filter(c => c.uid === before[0]).length, 1, '换掉的牌洗回了牌堆');
+}
+{
+  // 极端验证：牌堆里只剩 1 张时，换牌抽到的必须是它，而不是刚换掉的那张
+  const g = fresh('northern', 'monsters');
+  const out = g.side.player.hand[0];
+  const rest = g.side.player.pile.splice(0, g.side.player.pile.length);
+  const only = makeCard(ALL_CARDS['northern_ballista']);
+  only.owner = 'player';
+  g.side.player.pile.push(only);
+  const r = g.mulliganSwap('player', 0);
+  check(!!r.in && r.in.uid === only.uid, '牌堆只剩 1 张时抽到的是那一张（不是刚换掉的牌）');
+  check(!g.side.player.hand.some(c => c.uid === out.uid), '换掉的牌没有被立刻抽回来');
+  g.side.player.pile.push(...rest);
 }
 
 console.log('\n===== 3. 金龙：打对方同排最强，而不是自杀 =====');
@@ -370,7 +401,9 @@ console.log('\n===== 12. 松鼠党挂起期间禁止出牌/过牌/用领袖 ====
   check(!g.canUseLeader('player'), '挂起期间不能用领袖技');
   g.applyFirstChoice(true);
   eq(g.current, 'player', '选择「我先手」后轮到自己');
-  check(g.playCard('player', 0, null).ok, '选择后可以正常出牌');
+  // 手牌第 0 张可能是「没有可收回目标」的诱饵 → 挑一张一定能打出去的单位牌（避免随机牌序导致的假失败）
+  const playableIdx = g.side.player.hand.findIndex(c => c.type !== 'special');
+  check(playableIdx >= 0 && g.playCard('player', playableIdx, null).ok, '选择后可以正常出牌');
 }
 
 console.log('\n===== 13. 复活的间谍不再算「对方场上的间谍」 =====');
@@ -494,8 +527,9 @@ console.log('\n===== 16. 同袍 × 鼓舞：倍率先算、鼓舞后加 =====');
   eq(kayran._effective, 8, '英雄自身不吃鼓舞（仍是 8）');
 }
 
-console.log('\n===== 17. 召唤：只从牌堆拉同组牌，手上的不动 =====');
+console.log('\n===== 17. 召唤（集合）：双向对称 + 可选的「连手牌一起拉」 =====');
 {
+  // 真规则默认：牌堆 + 手牌都拉（玩家反馈 #3：游戏里集合会强制打出手牌里的同组牌）
   const g = fresh('monsters', 'northern');
   begin(g);
   g.current = 'player';
@@ -513,13 +547,58 @@ console.log('\n===== 17. 召唤：只从牌堆拉同组牌，手上的不动 ===
   const res = g.playCard('player', g.side.player.hand.indexOf(played), 'melee');
   check(res.ok, '打出吸血鬼（召唤）');
   const field = g.side.player.rows.melee.map(c => c.defId);
-  eq(field.filter(id => id === 'monsters_vampire_bruxa').length, 1, '牌堆里的布鲁萨被召唤上场');
-  eq(field.filter(id => id === 'monsters_vampire_katakan').length, 1, '牌堆里的卡塔坎（5 战力）也被召唤');
-  eq(field.filter(c => c.startsWith('monsters_vampire_')).length, 6, '打出的 1 张 + 牌堆里的 5 张 = 场上 6 张同组牌');
-  check(g.side.player.hand.some(c => c.uid === handA.uid), '手上的布鲁萨没有被召唤（仍在手牌）');
-  check(g.side.player.hand.some(c => c.uid === handB.uid), '手上的弗莱德也没有被召唤');
+  eq(field.filter(id => id === 'monsters_vampire_bruxa').length, 2, '牌堆里的布鲁萨 + 手牌里的布鲁萨都上场了（真规则）');
+  eq(field.filter(c => c.startsWith('monsters_vampire_')).length, 8, '打出的 1 张 + 牌堆 5 张 + 手牌 2 张 = 场上 8 张同组牌');
+  check(!g.side.player.hand.some(c => c.uid === handA.uid), '手牌里的布鲁萨被强制拉上场（旧版留在手上）');
+  check(!g.side.player.hand.some(c => c.uid === handB.uid), '手牌里的弗莱德也被拉上场');
   eq(g.side.player.pile.filter(c => (c.mg || c.defId) === 'vampire').length, 0, '牌堆里的同组牌已被拉空');
-  eq(g.side.player.hand.length, handBefore - 1, '手牌只少了打出的那一张');
+  eq(g.side.player.hand.length, handBefore - 3, '手牌少了打出的 1 张 + 被拉走的 2 张');
+}
+{
+  // 关掉「连手牌一起拉」→ 只从牌堆拉（更省手牌，玩家更喜欢的口径）
+  const g = fresh('monsters', 'northern', { options: { musterAuto: true, musterFromHand: false } });
+  begin(g);
+  g.current = 'player';
+  clearGroup(g, 'player', 'vampire');
+  for (const id of ['monsters_vampire_bruxa', 'monsters_vampire_katakan']) {
+    const c = makeCard(ALL_CARDS[id]); c.owner = 'player'; g.side.player.pile.push(c);
+  }
+  const handA = give(g, 'player', 'monsters_vampire_bruxa');
+  const played = give(g, 'player', 'monsters_vampire_ekimmara');
+  g.playCard('player', g.side.player.hand.indexOf(played), 'melee');
+  eq(g.side.player.rows.melee.filter(c => (c.mg || c.defId) === 'vampire').length, 3, '只从牌堆拉：场上 3 张（打出的 1 + 牌堆 2）');
+  check(g.side.player.hand.some(c => c.uid === handA.uid), '手牌里的同组牌留在手上（设置已关闭手牌拉牌）');
+}
+{
+  // 关掉「集合自动拉牌」→ 集合牌就是一张普通单位牌
+  const g = fresh('monsters', 'northern', { options: { musterAuto: false, musterFromHand: true } });
+  begin(g);
+  g.current = 'player';
+  clearGroup(g, 'player', 'nekker');
+  const inDeck = give(g, 'player', 'monsters_nekker');       // 先给一张再挪进牌堆
+  g.side.player.hand.pop();
+  inDeck.owner = 'player';
+  g.side.player.pile.push(inDeck);
+  const played = give(g, 'player', 'monsters_nekker');
+  const res = g.playCard('player', g.side.player.hand.indexOf(played), 'melee');
+  check(res.ok, '召唤关闭时集合牌仍可正常打出');
+  eq(g.side.player.rows.melee.filter(c => c.defId === 'monsters_nekker').length, 1, '牌堆里的同组牌没有被自动拉出来');
+  eq(g.side.player.pile.filter(c => c.defId === 'monsters_nekker').length, 1, '它还在牌堆里');
+}
+{
+  // 双向对称（玩家反馈 #3：巨兽能拉蟹蜘蛛，蟹蜘蛛拉不到巨兽）
+  const g = fresh('monsters', 'northern', { options: { musterAuto: true, musterFromHand: false } });
+  begin(g);
+  g.current = 'player';
+  clearGroup(g, 'player', 'arachas');
+  const beh = makeCard(ALL_CARDS['monsters_arachas_behemoth']); beh.owner = 'player'; g.side.player.pile.push(beh);
+  const a1 = makeCard(ALL_CARDS['monsters_arachas']); a1.owner = 'player'; g.side.player.pile.push(a1);
+  const played = give(g, 'player', 'monsters_arachas');
+  const res = g.playCard('player', g.side.player.hand.indexOf(played), 'melee');
+  check(res.ok, '打出阿拉哈斯');
+  check(g.side.player.rows.siege.some(c => c.uid === beh.uid) || g.side.player.rows.melee.some(c => c.uid === beh.uid),
+    '阿拉哈斯把牌堆里的「阿拉哈斯巨兽」也拉上场了（反方向同样成立）');
+  eq(g.side.player.rows.melee.filter(c => c.defId === 'monsters_arachas').length + 0, 2, '牌堆里的另一张阿拉哈斯也在场（打出的 1 + 拉出的 1）');
 }
 {
   // 牌堆没有同组牌：不报错
@@ -534,7 +613,7 @@ console.log('\n===== 17. 召唤：只从牌堆拉同组牌，手上的不动 ===
 }
 {
   // 医生复活的召唤牌会再次触发召唤
-  const g = fresh('monsters', 'northern');
+  const g = fresh('monsters', 'northern', { options: { musterAuto: true, musterFromHand: false } });
   begin(g);
   g.current = 'player';
   clearGroup(g, 'player', 'vampire');
@@ -550,6 +629,203 @@ console.log('\n===== 17. 召唤：只从牌堆拉同组牌，手上的不动 ===
   g.refresh();
   check(onRow(g, 'player', 'melee', dead.uid), '复活的吸血鬼上场');
   eq(g.side.player.rows.melee.filter(c => (c.mg || c.defId) === 'vampire').length, 3, '复活后再次召唤出牌堆里的同组牌（共 3 张）');
+}
+
+/* ============================================================
+ * 第二批（2026-09-17 第二轮玩家反馈 10 条）—— 18~24
+ *   18) 诱饵失效/卡死   19) 天气互相覆盖   20) 世界毁灭者全程随机
+ *   21) 平局不加胜场   22) 松鼠党每局都能定先手   23) 敏捷不能选排
+ *   24) 号角不能选排
+ * ============================================================ */
+
+console.log('\n===== 18. 诱饵：走引擎的「挂起 → 选目标」协议（旧版 UI 绕开引擎 = 永远失败） =====');
+{
+  const g = fresh('northern', 'monsters');
+  begin(g);
+  g.current = 'player';
+  const unit = put(g, 'player', 'northern_blue_stripes_commando', 'melee');
+  const decoy = give(g, 'player', 'special_decoy');
+  const res = g.playCard('player', g.side.player.hand.indexOf(decoy), null);
+  check(res.needTarget === 'decoy', '打出诱饵 → 引擎挂起「待选目标」（ok=false 是这个协议的正常值）');
+  check(!!g.pendingDecoy, 'pendingDecoy 已设置');
+  check(g.side.player.hand.some(c => c.uid === decoy.uid), '未收目标前诱饵仍在手牌');
+  check(!g.playCard('player', 0, null).ok, '选目标期间不能出别的牌（不会插队把状态搞乱）');
+  const r2 = g.applyDecoy('player', unit.uid);
+  check(r2.ok, '选中单位后收回成功');
+  check(g.side.player.hand.some(c => c.uid === unit.uid), '被收回的单位回到手牌');
+  check(!onRow(g, 'player', 'melee', unit.uid), '单位已离场');
+  check(!g.side.player.hand.some(c => c.uid === decoy.uid), '诱饵已消耗（不在手牌）');
+  check(g.side.player.graveyard.some(c => c.uid === decoy.uid), '诱饵进了坟场');
+  check(!g.pendingDecoy, '挂起状态已清空（不会卡死在选目标模式）');
+}
+{
+  // 场上没有可收回单位（只有英雄）→ 直接拒绝，且不留挂起状态
+  const g = fresh('northern', 'monsters');
+  begin(g);
+  g.current = 'player';
+  put(g, 'player', 'monsters_kayran', 'melee');       // 英雄（免疫诱饵）
+  const decoy = give(g, 'player', 'special_decoy');
+  const res = g.playCard('player', g.side.player.hand.indexOf(decoy), null);
+  check(!res.ok && res.needTarget !== 'decoy', '只有英雄时直接失败');
+  check(!g.pendingDecoy, '不会留下 pendingDecoy（旧版会让 UI 卡死）');
+  check(g.side.player.hand.some(c => c.uid === decoy.uid), '诱饵留在手牌');
+}
+
+console.log('\n===== 19. 天气各管一排：霜冻与雨天可同时挂（旧版互相覆盖） =====');
+{
+  const g = fresh('northern', 'monsters');
+  begin(g);
+  g.current = 'player';
+  const enemy = put(g, 'ai', 'monsters_arachas', 'melee', 5);
+  const enemy2 = put(g, 'ai', 'monsters_arachas', 'ranged', 5);   // 借个远程位放非英雄
+  const frost = give(g, 'player', 'special_biting_frost');
+  g.playCard('player', g.side.player.hand.indexOf(frost), null);
+  eq(g.weather.frost, true, '霜冻生效');
+  g.current = 'player';
+  const rain = give(g, 'player', 'special_torrential_rain');
+  g.playCard('player', g.side.player.hand.indexOf(rain), null);
+  eq(g.weather.frost, true, '打雨天不会清掉霜冻（玩家反馈 #10）');
+  eq(g.weather.rain, true, '雨天同时生效');
+  eq(g.rowTotal('ai', 'melee'), 1, '近战非英雄被霜冻压到 1');
+  eq(g.rowTotal('ai', 'ranged'), 5, '远程排不受霜冻影响（5 点原样）');
+  g.current = 'player';
+  const clear = give(g, 'player', 'special_clear_weather');
+  g.playCard('player', g.side.player.hand.indexOf(clear), null);
+  check(!g.weather.frost && !g.weather.rain, '只有「天晴」才清空所有天气');
+}
+
+console.log('\n===== 20. 领袖「世界毁灭者」：弃哪 2 张、取哪 1 张都由玩家自己选 =====');
+{
+  const g = fresh('monsters', 'northern', { pLeader: 'monsters_eredin_destroyer_of_worlds' });
+  begin(g);
+  g.current = 'player';
+  const pileBefore = g.side.player.pile.length;
+  const handUids = g.side.player.hand.map(c => c.uid);
+  const res = g.useLeader('player');
+  check(res.ok && res.pendingDiscard, '领袖技挂起「选择要弃掉的牌」');
+  check(g.side.player.leaderUsed, '领袖技已标记用掉（不能反复触发）');
+  check(!g.playCard('player', 0, null).ok, '未完成弃牌前不能出牌');
+  check(!g.pass('player').ok, '未完成弃牌前不能过牌');
+  check(!g.applyDiscard('player', handUids.slice(0, 1)).ok, '只选 1 张会被拒绝');
+  check(!g.applyDiscard('player', [handUids[0], handUids[0]]).ok, '同一张牌选两次会被拒绝');
+  check(!g.applyDiscard('player', [handUids[0], 999999]).ok, '手牌里没有的牌会被拒绝');
+  const r2 = g.applyDiscard('player', [handUids[0], handUids[1]]);
+  check(r2.ok && r2.pendingDeckPick, '弃牌完成 → 挂起「从牌组挑 1 张」');
+  eq(g.side.player.graveyard.filter(c => handUids.slice(0, 2).includes(c.uid)).length, 2, '进坟场的正是玩家选的那 2 张');
+  check(!g.side.player.hand.some(c => handUids.slice(0, 2).includes(c.uid)), '这 2 张已不在手牌');
+  const want = g.side.player.pile[3];
+  const r3 = g.applyDeckPick('player', want.uid);
+  check(r3.ok, '从牌组取牌成功');
+  check(g.side.player.hand.some(c => c.uid === want.uid), '取到的正是玩家挑的那一张（旧版是随机）');
+  eq(g.side.player.pile.length, pileBefore - 1, '牌堆少 1 张');
+  check(!g.pendingDeckPick && !g.pendingDiscard, '挂起状态全部清空');
+}
+
+console.log('\n===== 21. 小局平局：双方各 +1；1:0 之后打平 = 2:1 直接结束 =====');
+{
+  const g = fresh('northern', 'monsters');
+  begin(g);
+  put(g, 'player', 'northern_blue_stripes_commando', 'melee', 6);
+  put(g, 'ai', 'monsters_arachas', 'melee', 6);
+  eq(g.scores.player, g.scores.ai, '双方同分');
+  g.passed = { player: true, ai: true };
+  g._endRound();
+  eq(g.side.player.roundsWon, 1, '平局 → 玩家 +1 胜场');
+  eq(g.side.ai.roundsWon, 1, '平局 → 对手 +1 胜场');
+  check(!g.over, '1:1 → 还要打第 3 局');
+}
+{
+  const g = fresh('northern', 'monsters');
+  begin(g);
+  put(g, 'player', 'northern_ballista', 'siege', 6);
+  g.passed = { player: true, ai: true };
+  g._endRound();
+  eq(g.side.player.roundsWon, 1, '第 1 局玩家拿下（1:0）');
+  g.passed = { player: true, ai: true };
+  g._endRound();
+  eq(g.side.player.roundsWon, 2, '第 2 局打平 → 玩家也 +1');
+  eq(g.side.ai.roundsWon, 1, '对手拿到 1 胜');
+  check(g.over, '2:1 → 整局立刻结束（旧版平局不加分，会白打第 3 局）');
+  eq(g.winner, 'player', '玩家获胜');
+}
+
+console.log('\n===== 22. 松鼠党被动：只有第一局能定先手（可选项放开为每局） =====');
+{
+  const g = fresh('scoiatael', 'monsters');
+  g.doMulligan([]);
+  g.finishMulligan();
+  check(!!g.pendingFirstPick, '第 1 局挂起等待选择');
+  g.applyFirstChoice(true);
+  g.passed = { player: true, ai: true };
+  g._endRound();
+  eq(g.round, 2, '进入第 2 局');
+  check(!g.pendingFirstPick, '第 2 局不再挂起（真规则：只有第一局，玩家反馈 #6）');
+  eq(g.current, 'ai', '第 2 局先手改由引擎决定（平局无人获胜 → 双方轮换，第 1 局先手是玩家）');
+}
+{
+  const g = fresh('scoiatael', 'monsters', { options: { scoiataelEveryRound: true } });
+  g.doMulligan([]);
+  g.finishMulligan();
+  if (g.pendingFirstPick) g.applyFirstChoice(true);
+  g.passed = { player: true, ai: true };
+  g._endRound();
+  check(!!g.pendingFirstPick, '打开「每局都能定先手」选项后，第 2 局照样挂起');
+}
+
+console.log('\n===== 23. 敏捷单位：两排都合法，玩家选哪排就放哪排 =====');
+{
+  const g = fresh('scoiatael', 'monsters');
+  begin(g);
+  g.current = 'player';
+  const agile = give(g, 'player', 'scoiatael_barclay_els');
+  eq(g.rowOptions(agile).length, 2, '敏捷单位有两个合法排（近战/远程）');
+  check(g.needsRowChoice(agile), '引擎提示「需要玩家选排」');
+  const res = g.playCard('player', g.side.player.hand.indexOf(agile), 'ranged');
+  check(res.ok, '打得出去');
+  eq(g.side.player.rows.ranged.filter(c => c.uid === agile.uid).length, 1, '落在玩家选的远程排（旧版自动挑一排）');
+  eq(g.side.player.rows.melee.filter(c => c.uid === agile.uid).length, 0, '没有落到近战排');
+}
+{
+  const g = fresh('scoiatael', 'monsters');
+  begin(g);
+  g.current = 'player';
+  const fixed = give(g, 'player', 'scoiatael_elven_skirmisher');    // 固定远程排
+  eq(g.rowOptions(fixed).length, 1, '固定排单位只有一个合法排');
+  check(!g.needsRowChoice(fixed), '不需要选排');
+  const res = g.playCard('player', g.side.player.hand.indexOf(fixed), 'melee');
+  check(!res.ok, '传一个不合法的排 → 直接拒绝（不再悄悄换排）');
+  check(g.side.player.hand.some(c => c.uid === fixed.uid), '被拒绝的牌仍在手牌');
+}
+
+console.log('\n===== 24. 号角：由玩家指定排；不叠加的排会被拒绝（不白扔一张） =====');
+{
+  const g = fresh('northern', 'monsters');
+  begin(g);
+  g.current = 'player';
+  put(g, 'player', 'northern_ballista', 'siege', 6);
+  const horn = give(g, 'player', 'special_commanders_horn');
+  const res = g.playCard('player', g.side.player.hand.indexOf(horn), 'siege');
+  check(res.ok, '放到玩家选的攻城排');
+  eq(g.rowTotal('player', 'siege'), 12, '该排非英雄 ×2');
+  eq(g.side.player.horn.melee, false, '没有自作主张放到近战排（旧版自动挑一排）');
+  const horn2 = give(g, 'player', 'special_commanders_horn');
+  g.current = 'player';
+  const r2 = g.playCard('player', g.side.player.hand.indexOf(horn2), 'siege');
+  check(!r2.ok, '同一排第二张号角被拒绝（不叠加）');
+  check(g.side.player.hand.some(c => c.uid === horn2.uid), '被拒绝的号角仍在手牌（没有白扔）');
+}
+{
+  // 领袖「号令」翻倍过的排同样不能再放号角
+  const g = fresh('monsters', 'northern', { pLeader: 'monsters_eredin_commander_of_the_red_riders' });
+  begin(g);
+  g.current = 'player';
+  put(g, 'player', 'monsters_arachas', 'melee', 4);
+  g.useLeader('player');
+  const horn = give(g, 'player', 'special_commanders_horn');
+  g.current = 'player';
+  const res = g.playCard('player', g.side.player.hand.indexOf(horn), 'melee');
+  check(!res.ok, '已被领袖技翻倍的排不能再叠号角');
+  check(g.side.player.hand.some(c => c.uid === horn.uid), '号角留在手牌');
 }
 
 console.log(`\n结果：${pass} 通过 / ${fail} 失败`);

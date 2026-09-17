@@ -41,17 +41,17 @@ const LEADER_CN = {
   steal_opp_discard: '窃取：从对方坟场取一张牌加入自己手牌',
   spy_any:           '卧底：任意排放置一张 1 战力间谍到自己场上（你抽 1）',
   buff_melee_1:      '士气：己方近战排非英雄单位各 +1',
-  fog_again:         '浓雾再临：天气变为浓雾（清除其它天气）',
-  frost_again:       '寒潮：天气变为刺骨冰霜（清除其它天气）',
-  rain_again:        '暴雨倾盆：天气变为倾盆大雨（清除其它天气）',
+  fog_again:         '浓雾再临：天气变为浓雾（不影响其它天气）',
+  frost_again:       '寒潮：天气变为刺骨冰霜（不影响其它天气）',
+  rain_again:        '暴雨倾盆：天气变为倾盆大雨（不影响其它天气）',
   take_enemy_hand:   '王权：随机取对方手牌 1 张加入己方手牌',
-  deck_weather_frost: '从牌组取出一张「刺骨冰霜」并使用（清除其它天气）',
-  deck_weather_fog:  '从牌组取出一张「蔽日浓雾」并使用（清除其它天气）',
-  deck_weather_rain: '从牌组取出一张「倾盆大雨」并使用（清除其它天气）',
-  deck_weather_any:  '从牌组取出一张天气牌并使用（清除其它天气）',
+  deck_weather_frost: '从牌组取出一张「刺骨冰霜」并使用（不影响其它天气）',
+  deck_weather_fog:  '从牌组取出一张「蔽日浓雾」并使用（不影响其它天气）',
+  deck_weather_rain: '从牌组取出一张「倾盆大雨」并使用（不影响其它天气）',
+  deck_weather_any:  '从牌组取出一张天气牌并使用（不影响其它天气）',
   see_opponent_hand: '查看对手手牌中随机 3 张',
   cancel_opponent_leader: '封锁对手的领袖技（对手已用时无效）',
-  discard_2_draw_1:  '弃掉 2 张牌，然后抽 1 张牌',
+  discard_2_draw_1:  '弃掉 2 张牌（由你选），再从牌组挑 1 张加入手牌（也由你选）',
   revive_to_hand:    '从己方坟场取一张牌加入手牌',
   destroy_enemy_melee:  '焚风：对方近战排总战力 ≥10 时，摧毁该排最强的非英雄单位（并列全灭）',
   destroy_enemy_siege:  '焚风：对方攻城排总战力 ≥10 时，摧毁该排最强的非英雄单位（并列全灭）',
@@ -100,6 +100,22 @@ class GwentGame {
     this.stats = { player: this._blankStats(), ai: this._blankStats() };
     this.aiSkill = cfg.aiSkill == null ? 0.6 : cfg.aiSkill;
     this.difficulty = cfg.difficulty || 'normal';
+    // 可调规则选项：默认共用全局 GAME_OPTIONS（设置面板改了立刻生效）；测试可用 cfg.options 覆盖
+    this.opts = (cfg && cfg.options) || (typeof GAME_OPTIONS !== 'undefined' ? GAME_OPTIONS : {});
+    // 需要玩家做选择的挂起状态（UI 弹窗处理完再调用对应的 apply* 方法）
+    this.pendingDiscard = null;     // 领袖「世界毁灭者」：选择要弃掉的手牌
+    this.pendingDeckPick = null;    // 领袖「世界毁灭者」：从牌组挑一张
+  }
+
+  /** 读一个规则选项（没有就返回默认值） */
+  _opt(name, def) {
+    const v = this.opts ? this.opts[name] : undefined;
+    return typeof v === 'boolean' ? v : def;
+  }
+
+  /** 是否还有必须由玩家完成的选择（UI 一律用这个判断，别再逐个字段写） */
+  hasPendingChoice() {
+    return !!(this.pendingFirstPick || this.pendingMedic || this.pendingDiscard || this.pendingDeckPick);
   }
 
   /** 空统计表（结算界面用） */
@@ -140,59 +156,46 @@ class GwentGame {
     this.needMulligan = true;
     this.aiMulliganDone = false;
     this.mulliganUsed = { player: 0, ai: 0 };   // 每方最多换 2 张（整个换牌阶段累计）
-    this._log('sys', '游戏开始！双方各抽 10 张牌，可各换 2 张。');
+    // 被换掉的牌先「放在一边」——调度期间不在牌堆里，所以绝不会被重新抽到（真规则）
+    this.mulliganSetAside = { player: [], ai: [] };
+    this._log('sys', `游戏开始！双方各抽 10 张牌。调度规则：选一张不要的牌 → 立刻重抽一张，最多 ${this._mulliganLimit()} 次；换掉的牌本轮不会再抽到，调度结束后洗回牌堆。`);
     this._log('sys', `${this.side.player.deck.faction}  VS  ${this.side.ai.deck.faction}`);
+  }
+
+  _mulliganLimit() {
+    return (typeof DECK_RULES !== 'undefined' && DECK_RULES.mulligan) || 2;
   }
 
   getSides() { return this.side; }
 
-  /** 换牌（开局调度）：把手中某张洗回牌堆并重抽一张；hands: [{side,index}]
-   *  真规则（W3 内置昆特）：开局各 10 张，双方均可最多换 2 张；
-   *  换回的牌洗回牌堆（可能再次抽到，但不会在本轮换牌中抽回同一张）。 */
-  doMulligan(replacements) {
-    if (!this.needMulligan) return;
-    const LIMIT = (typeof DECK_RULES !== 'undefined' && DECK_RULES.mulligan) || 2;
-    if (!this.mulliganUsed) this.mulliganUsed = { player: 0, ai: 0 };
-    const swaps = {};                       // side -> [card]
-    for (const r of (replacements || [])) {
-      const s = this.side[r.side];
-      if (!s) continue;
-      if ((this.mulliganUsed[r.side] || 0) >= LIMIT) continue;   // 每方整局最多换 2 张
-      const c = s.hand.splice(r.index, 1)[0];
-      if (!c) continue;
-      this.mulliganUsed[r.side] = (this.mulliganUsed[r.side] || 0) + 1;
-      (swaps[r.side] = swaps[r.side] || []).push(c);
-    }
-    const sides = Object.keys(swaps);
-    if (!sides.length) return;
-    // 1) 换回的牌随机洗回牌堆
-    for (const sideName of sides) {
-      const s = this.side[sideName];
-      for (const c of swaps[sideName]) {
-        const pos = Math.floor(Math.random() * (s.pile.length + 1));
-        s.pile.splice(pos, 0, c);
-      }
-    }
-    // 2) 各补抽等量（跳过本回合刚换回的牌）
-    for (const sideName of sides) {
-      const s = this.side[sideName];
-      for (const c of swaps[sideName]) {
-        const nc = this._drawSkipping(s, new Set(swaps[sideName].map(x => x.uid)));
-        if (nc) s.hand.push(nc);
-      }
-    }
-    this._log('sys', `换牌完成：${sides.map(s => (s === 'player' ? '你' : '对手') + '换 ' + swaps[s].length + ' 张').join('，')}。`);
+  /** 开局调度（逐张）：把手里第 handIndex 张放到一边，立刻从牌堆重抽一张。
+   *  真规则（W3 内置昆特）：选一张不要的牌 → 重新抓一张，最多 2 次；
+   *  换掉的牌不会被重复抓到（它们此刻不在牌堆里），调度结束后再洗回牌堆。
+   *  @returns {{ok:boolean, out?:Card, in?:Card, left?:number, error?:string}}
+   */
+  mulliganSwap(sideName, handIndex) {
+    if (!this.needMulligan) return { ok: false, error: '现在不是开局调度阶段' };
+    const LIMIT = this._mulliganLimit();
+    const s = this.side[sideName];
+    if (!s) return { ok: false, error: '未知方' };
+    const used = this.mulliganUsed[sideName] || 0;
+    if (used >= LIMIT) return { ok: false, error: `最多只能换 ${LIMIT} 张` };
+    const card = s.hand[handIndex];
+    if (!card) return { ok: false, error: '手牌索引无效' };
+    s.hand.splice(handIndex, 1);
+    this.mulliganSetAside[sideName].push(card);
+    this.mulliganUsed[sideName] = used + 1;
+    const nc = this._drawCards(s, 1)[0] || null;     // 换回的牌不在牌堆里 → 抽不到它
+    if (nc) s.hand.push(nc);
+    this._log('sys', `${sideName === 'player' ? '你' : '对手'}换掉「${card.name.zh}」${nc ? `，重抽到「${nc.name.zh}」` : '（牌堆已空，没得抽）'}（还剩 ${Math.max(0, LIMIT - this.mulliganUsed[sideName])} 次）`);
+    return { ok: true, out: card, in: nc, left: Math.max(0, LIMIT - this.mulliganUsed[sideName]) };
   }
 
-  /** 抽一张，跳过黑名单（本次换回的牌） */
-  _drawSkipping(side, black) {
-    for (let i = 0; i < side.pile.length; i++) {
-      if (black.has(side.pile[i].uid)) continue;
-      const c = side.pile.splice(i, 1)[0];
-      c.owner = side.name;
-      return c;
-    }
-    return null;
+  /** 一次换多张（测试/无头入口用）：按顺序逐张结算，所以同样受 2 张上限约束。
+   *  hands: [{side, index}] —— 索引按「当前手牌」逐个结算（与旧版行为一致）。 */
+  doMulligan(replacements) {
+    if (!this.needMulligan) return;
+    for (const r of (replacements || [])) this.mulliganSwap(r.side, r.index);
   }
 
   /** AI 开局调度（引擎侧实现，保证所有入口都一致；难度越高换得越准） */
@@ -208,8 +211,8 @@ class GwentGame {
     scored.sort((a, b) => a.v - b.v);
     const picks = scored.filter(x => x.v < 5).slice(0, limit);
     if (!picks.length) return;
-    picks.sort((a, b) => b.i - a.i);               // 从后往前删，索引不串位
-    this.doMulligan(picks.map(p => ({ side: 'ai', index: p.i })));
+    picks.sort((a, b) => b.i - a.i);               // 从后往前换，索引不串位
+    for (const p of picks) this.mulliganSwap('ai', p.i);
   }
 
   _mulliganValue(c) {
@@ -235,6 +238,14 @@ class GwentGame {
     if (!this.needMulligan) return;
     this.aiMulligan();                 // 双方都要换牌
     this.needMulligan = false;
+    // 调度结束：被换掉的牌才洗回牌堆（调度期间它们不在牌堆里 ⇒ 一定不会被重复抓到）
+    for (const s of ['player', 'ai']) {
+      const pile = this.side[s].pile;
+      const back = (this.mulliganSetAside && this.mulliganSetAside[s]) || [];
+      for (const c of back) pile.splice(Math.floor(Math.random() * (pile.length + 1)), 0, c);
+      if (back.length) this._log('sys', `${s === 'player' ? '你' : '对手'}换掉的 ${back.length} 张牌已洗回牌堆。`);
+    }
+    this.mulliganSetAside = { player: [], ai: [] };
     this.beginRound();
   }
 
@@ -261,7 +272,9 @@ class GwentGame {
     else if (this.roundWinner) this.current = this.roundWinner;
     else this.current = this._prevFirst === 'player' ? 'ai' : 'player';
     // 松鼠党阵营被动：由该方决定谁先手
-    const chooser = this._firstChooser();
+    // 真规则：只有【第一局】能用（旧版每局都给，等于白送两局优势）——可在设置里放开
+    const everyRound = this._opt('scoiataelEveryRound', false);
+    const chooser = (this.round === 1 || everyRound) ? this._firstChooser() : null;
     if (chooser === 'player') {
       this.pendingFirstPick = { round: this.round };
       this._log('sys', '松鼠党被动：由你决定本局谁先手（请选择）');
@@ -332,6 +345,17 @@ class GwentGame {
     return card.row === row;
   }
 
+  /** 该单位所有合法排（UI 用它判断「是否需要玩家选排」）。
+   *  真规则：敏捷单位由玩家自己决定放近战还是远程（旧版自动选，玩家无法干预）。 */
+  rowOptions(card) {
+    return ROWS.filter(r => this.cardFitsRow(card, r));
+  }
+
+  /** 是否需要玩家手动选排（≥2 个合法排） */
+  needsRowChoice(card) {
+    return this.rowOptions(card).length > 1;
+  }
+
   /** 该排最终战力（考虑号角/天气/士气等已经过 buff 后做一次性求值） */
   rowTotal(sideName, row) {
     const side = this.side[sideName];
@@ -382,21 +406,31 @@ class GwentGame {
     return Math.max(1, n);
   }
 
-  /** 召唤组名（缺省用 defId = 同名） */
+  /** 召唤组名（缺省用 defId = 同名）。组关系是【对称】的：
+   *  两张牌只要有一侧声明了 mg 指向另一侧（或声明了同一个 mg），就算同组。
+   *  旧版只比 `mg || defId` —— 只要数据里某一侧漏写 mg，就会出现「A 能拉 B、B 拉不到 A」。 */
   musterGroup(card) { return card.mg || card.defId; }
 
-  /** 召唤：该组还在【牌堆】里的张数（真规则：只从牌堆召唤，手上的不会自动上场） */
-  musterDeckCount(sideName, card) {
-    if (card.ability !== 'muster') return 0;
-    const g = this.musterGroup(card);
-    return this.side[sideName].pile.filter(c => c.type === 'unit' && this.musterGroup(c) === g).length;
+  /** c 是否属于 origin 的召唤组（对称判定，修掉「反过来不行」） */
+  inMusterGroup(origin, c) {
+    if (!c || !origin || c.type !== 'unit') return false;
+    if (c === origin) return false;
+    if (this.musterGroup(c) === this.musterGroup(origin)) return true;
+    if (c.mg && c.mg === origin.defId) return true;
+    if (origin.mg && origin.mg === c.defId) return true;
+    return false;
   }
 
-  /** 召唤：该组在【手牌】里的张数（仅供 UI 提示：这些不会被召唤） */
+  /** 召唤：该组还在【牌堆】里的张数 */
+  musterDeckCount(sideName, card) {
+    if (card.ability !== 'muster') return 0;
+    return this.side[sideName].pile.filter(c => this.inMusterGroup(card, c)).length;
+  }
+
+  /** 召唤：该组在【手牌】里的张数（是否会一起被拉上场取决于设置 musterFromHand） */
   musterHandCount(sideName, card) {
     if (card.ability !== 'muster') return 0;
-    const g = this.musterGroup(card);
-    return this.side[sideName].hand.filter(c => c !== card && c.type === 'unit' && this.musterGroup(c) === g).length;
+    return this.side[sideName].hand.filter(c => this.inMusterGroup(card, c)).length;
   }
 
   /** 该排是否受天气影响 */
@@ -454,13 +488,24 @@ class GwentGame {
   /* =========================================================
    * 出牌
    * ========================================================= */
+  /** 有未完成的选择 → 返回统一的拒绝对象；没有则返回 null。
+   *  旧版只挡了「先手选择 / 医生」，领袖弃牌、诱饵等挂起状态都能被别的操作插队。 */
+  _pendingBlock() {
+    if (this.pendingFirstPick) return { ok: false, error: '请先选择本局先手方' };
+    if (this.pendingMedic) return { ok: false, error: '请先完成医生复活选择' };
+    if (this.pendingDiscard) return { ok: false, error: '请先完成领袖技的弃牌选择' };
+    if (this.pendingDeckPick) return { ok: false, error: '请先从牌组选择要取走的牌' };
+    if (this.pendingDecoy) return { ok: false, error: '请先选择诱饵要收回的单位（或取消）' };
+    return null;
+  }
+
   /**
    * @returns {{ok:boolean, error?:string, events?:array}}
    */
   playCard(sideName, handIndex, targetRow) {
     if (this.over) return { ok: false, error: '游戏已结束' };
-    if (this.pendingFirstPick) return { ok: false, error: '请先选择本局先手方' };
-    if (this.pendingMedic) return { ok: false, error: '请先完成医生复活选择' };
+    const blocked = this._pendingBlock();
+    if (blocked) return blocked;
     if (this.current !== sideName) return { ok: false, error: '还没轮到你' };
     if (this.passed[sideName]) return { ok: false, error: '本局你已过牌' };
     const side = this.side[sideName];
@@ -471,11 +516,16 @@ class GwentGame {
 
     // ---------- 特殊牌 ----------
     if (card.type === 'special') {
+      if (targetRow && !ROWS.includes(targetRow)) return { ok: false, error: '目标排无效' };
       const res = this._playSpecial(sideName, card, targetRow);
       if (!res.ok) return res;
       events.push(...res.events);
     } else {
       // ---------- 单位 / 英雄 ----------
+      // 玩家明确指定的排必须合法：不能悄悄换成另一排（否则「我明明选了远程」会被无视）
+      if (targetRow && !this.cardFitsRow(card, targetRow)) {
+        return { ok: false, error: `该单位不能放在${ROW_CN[targetRow] || targetRow}排` };
+      }
       if (card.ability === 'spy') {
         // 间谍：放在对方场上（对方计分），自己抽 2
         const enemy = sideName === 'player' ? 'ai' : 'player';
@@ -720,18 +770,26 @@ class GwentGame {
     }
   }
 
-  /** 召唤：牌堆内同组（mg，缺省同名）单位全部拉出，各归其合法排
+  /** 召唤：同组单位全部拉上场（各归其合法排）
    *  真规则（巫师3 卡面「Find any cards with the same name in your deck and play them instantly」）：
-   *  只从【牌堆】召唤，手上的同组牌不会自动上场。 */
+   *  把同组牌直接从牌堆打出来 —— 这会让「凑齐一组」变成强迫症，也会吃掉手牌。
+   *  ⇒ 两个开关（设置面板）：
+   *     · musterAuto     关掉后集合牌只是一张普通单位牌（有玩家觉得这样更好玩）
+   *     · musterFromHand 开启后连手牌里的同组牌也一起打出去（真规则；会把你的手牌「强制上场」）
+   *  组关系用 inMusterGroup 判定 → 双向对称，不会再出现「A 拉得到 B、B 拉不到 A」。
+   */
   _doMuster(sideName, origin, row) {
     const side = this.side[sideName];
-    const group = this.musterGroup(origin);
     const evs = [];
+    if (!this._opt('musterAuto', true)) {
+      this._log(sideName, `召唤：设置里已关闭「集合自动拉牌」，「${origin.name.zh}」作为普通单位牌留场`);
+      return evs;
+    }
+    const fromHand = this._opt('musterFromHand', true);
+    const group = this.musterGroup(origin);
     let power = 0;
-    for (let i = side.pile.length - 1; i >= 0; i--) {
-      const c = side.pile[i];
-      if (this.musterGroup(c) !== group || c.type !== 'unit') continue;
-      side.pile.splice(i, 1);
+
+    const bringIn = (c, from) => {
       c.owner = sideName; c._side = sideName;
       const r = this._pickRow(c, sideName, null) || row;
       c.placedRow = r;
@@ -739,10 +797,31 @@ class GwentGame {
       this._applyEnterBuffs(c, sideName, r);
       power += c.power || 0;
       evs.push({ type: 'muster', card: c });
-      this._log(sideName, `  召唤：「${c.name.zh}」自动上场到${ROW_CN[r]}排`);
+      this._log(sideName, `  召唤：「${c.name.zh}」${from === 'hand' ? '（手牌）' : ''}自动上场到${ROW_CN[r]}排`);
+    };
+
+    // 1) 牌堆里的同组牌
+    for (let i = side.pile.length - 1; i >= 0; i--) {
+      const c = side.pile[i];
+      if (!this.inMusterGroup(origin, c)) continue;
+      side.pile.splice(i, 1);
+      bringIn(c, 'deck');
     }
+    // 2) 手牌里的同组牌（真规则；可由设置关掉）
+    if (fromHand) {
+      for (let i = side.hand.length - 1; i >= 0; i--) {
+        const c = side.hand[i];
+        if (!this.inMusterGroup(origin, c)) continue;
+        side.hand.splice(i, 1);
+        bringIn(c, 'hand');
+      }
+    } else {
+      const n = side.hand.filter(c => this.inMusterGroup(origin, c)).length;
+      if (n) this._log(sideName, `  召唤：手牌里还有 ${n} 张同组牌（设置里未开启「连手牌一起拉」，它们留在手上）`);
+    }
+
     if (evs.length) {
-      this._log(sideName, `召唤结算：从牌堆拉出 ${evs.length} 张同组牌（基础战力和 ${power}）`);
+      this._log(sideName, `召唤结算（组「${group}」）：拉出 ${evs.length} 张同组牌（基础战力和 ${power}）`);
     } else {
       this._log(sideName, `召唤：牌堆里没有可召唤的同组牌`);
     }
@@ -755,11 +834,13 @@ class GwentGame {
     const evs = [];
     switch (card.kind) {
       case 'weather':
-        for (const k of Object.keys(this.weather)) this.weather[k] = false;
+        // 真规则（修正）：天气牌【各管一排】，互不覆盖 ——
+        // 刺骨冰霜只冻近战、倾盆大雨只浇攻城，两者可以同时挂在场上；
+        // 只有「天晴」才会清除全部天气。（旧版打一张雨就把霜冻清掉了 = 玩家反馈 #10）
         this.weather[card.weatherKey] = true;
         side.hand.splice(side.hand.indexOf(card), 1);
         side.graveyard.push(card); card.placedRow = null; card.used = true;
-        this._log(sideName, `使用天气牌「${card.name.zh}」${WEATHER[card.weatherKey].desc}`);
+        this._log(sideName, `使用天气牌「${card.name.zh}」${WEATHER[card.weatherKey].desc}（只影响这一排，其它天气不受影响）`);
         evs.push({ type: 'weather', key: card.weatherKey });
         return { ok: true, events: evs };
       case 'clear':
@@ -775,17 +856,21 @@ class GwentGame {
           this.pendingHorn = { side: sideName, card };
           return { ok: false, needRow: true, error: '需要选择目标排' };
         }
+        // 号角不叠加：已号角 / 已被领袖技翻倍的排 → 直接拒绝，别让玩家白扔一张牌
+        if (side.horn[targetRow] || this.doubled[sideName][targetRow]) {
+          return { ok: false, error: `己方${ROW_CN[targetRow]}排已有号角或已被领袖技翻倍，号角不叠加 —— 请选别的排` };
+        }
         side.hand.splice(side.hand.indexOf(card), 1);
         side.horn[targetRow] = true;
         side.graveyard.push(card); card.used = true;
-        this._log(sideName, this.doubled[sideName][targetRow]
-          ? `在己方${ROW_CN[targetRow]}排放置号角，但该排已被领袖技翻倍 —— 号角没有额外效果`
-          : `在己方${ROW_CN[targetRow]}排放置号角，该排非英雄单位 ×2`);
+        this._log(sideName, `在己方${ROW_CN[targetRow]}排放置号角，该排非英雄单位 ×2`);
         evs.push({ type: 'horn', row: targetRow });
         return { ok: true, events: evs };
       }
       case 'decoy': {
-        // 需要选择自己场上非英雄单位
+        // 需要选择自己场上非英雄单位（没有目标就别挂起 —— 否则 UI 会卡在"选目标"模式里出不来）
+        const hasTarget = ROWS.some(r => side.rows[r].some(c => !c.tomb && c.type !== 'hero' && !c.spied));
+        if (!hasTarget) return { ok: false, error: '场上没有可收回的单位（诱饵不能收回英雄/间谍）' };
         this.pendingDecoy = { side: sideName, card };
         return { ok: false, needTarget: 'decoy', error: '请选择场上要收回的单位' };
       }
@@ -803,7 +888,8 @@ class GwentGame {
   /* ---------- 回合推进 / 过 ---------- */
   pass(sideName) {
     if (this.over || this.current !== sideName) return { ok: false };
-    if (this.pendingFirstPick || this.pendingMedic) return { ok: false, error: '有未完成的选择' };
+    const blocked = this._pendingBlock();
+    if (blocked) return blocked;
     if (this.passed[sideName]) return { ok: false, error: '本局你已过牌' };
     this.passed[sideName] = true;
     this._log(sideName, `${sideName === 'player' ? '你' : '对手'}选择【过】`);
@@ -853,8 +939,12 @@ class GwentGame {
         this.side[this.roundWinner].roundsWon++;
         this._log('sys', `平局！尼弗迦德阵营被动生效 —— ${this.roundWinner === 'player' ? '你' : '对手'}赢得第 ${this.round} 局。`);
       } else {
+        // 真规则（修正 #8）：小局平局 → 双方胜场【同时 +1】。
+        // 旧版谁都不加分：于是 1:0 之后打平，本该 2:1 直接结束，却还继续打第 3 局。
         this.roundWinner = null;
-        this._log('sys', '本局平局，无人得分。');
+        this.side.player.roundsWon++;
+        this.side.ai.roundsWon++;
+        this._log('sys', `本局平局 —— 双方各得 1 个胜场（现在 ${this.side.player.roundsWon} : ${this.side.ai.roundsWon}）。`);
       }
     } else {
       this.roundWinner = ps > as ? 'player' : 'ai';
@@ -874,8 +964,15 @@ class GwentGame {
     this._emit([{ type: 'roundEnd', winner: this.roundWinner, scores: { player: ps, ai: as }, round: this.round }]);
     if (this.side.player.roundsWon >= 2 || this.side.ai.roundsWon >= 2) {
       this.over = true;
-      this.winner = this.side.player.roundsWon >= 2 ? 'player' : 'ai';
-      this._log('sys', `======== 整局结束：${this.winner === 'player' ? '你赢了！' : '对手获胜'} ========`);
+      const pw = this.side.player.roundsWon, aw = this.side.ai.roundsWon;
+      if (pw >= 2 && aw >= 2) {
+        // 平局给双方都加分 ⇒ 理论上可能出现 2:2（第 3 局打平）→ 整局平局
+        this.winner = null;
+        this._log('sys', `======== 整局结束：${pw}:${aw} —— 平局 ========`);
+      } else {
+        this.winner = pw >= 2 ? 'player' : 'ai';
+        this._log('sys', `======== 整局结束：${this.winner === 'player' ? '你赢了！' : '对手获胜'}（${pw}:${aw}）========`);
+      }
       this._emit([{ type: 'matchEnd', winner: this.winner }]);
       return;
     }
@@ -950,7 +1047,7 @@ class GwentGame {
 
   canUseLeader(sideName) {
     const s = this.side[sideName];
-    if (this.pendingFirstPick || this.pendingMedic) return false;
+    if (this._pendingBlock()) return false;
     if (s.leaderUsed || this.over || this.current !== sideName || this.passed[sideName]) return false;
     if (this._leaderTargetType(s.deck.leader) === 'never') return false;
     return true;
@@ -986,10 +1083,10 @@ class GwentGame {
         const idx = s.pile.findIndex(c => c.type === 'special' && c.kind === 'weather' && (!want || c.weatherKey === want));
         if (idx >= 0) {
           const wc = s.pile.splice(idx, 1)[0];
-          for (const k in this.weather) this.weather[k] = false;
+          // 天气各管一排：领袖取出的天气牌只开自己那一排，不清除其它天气（玩家反馈 #10 的同源修正）
           this.weather[wc.weatherKey] = true;
           s.graveyard.push(wc);
-          this._log(sideName, `领袖「${leader.name.zh}」从牌组取出「${wc.name.zh}」`);
+          this._log(sideName, `领袖「${leader.name.zh}」从牌组取出「${wc.name.zh}」${WEATHER[wc.weatherKey].desc}`);
           evs.push({ type: 'weather', key: wc.weatherKey });
         } else this._log('sys', '牌组中没有对应天气牌，领袖技无效');
         break;
@@ -1017,17 +1114,29 @@ class GwentGame {
         this._log(sideName, `领袖「${leader.name.zh}」窥视对手手牌：${picks.join('、') || '（空）'}`);
         break;
       }
-      /* ---- 弃 2 抽 1 ---- */
+      /* ---- 弃 2 抽 1（真规则：弃哪两张、从牌组拿哪一张，都由玩家自己选；
+       *     旧版全程随机/自动 = 玩家反馈 #4） ---- */
       case 'discard_2_draw_1': {
-        const sorted = s.hand.map((c, i) => ({ c, i })).sort((a, b) => (a.c.power || 0) - (b.c.power || 0));
-        const drop = sorted.slice(0, Math.min(2, s.hand.length)).map(x => x.c);
+        const n = Math.min(2, s.hand.length);
+        if (n === 0) { this._log(sideName, '手牌为空，领袖技无效'); break; }
+        if (sideName === 'player') {
+          s.leaderUsed = true;
+          if (this.stats.player) this.stats.player.leaders++;
+          this.pendingDiscard = { side: sideName, count: n };
+          this._log('sys', `领袖「${leader.name.zh}」：请选择要弃掉的 ${n} 张手牌`);
+          this._emit([{ type: 'leader', effect: e, side: sideName }]);
+          this.refresh();
+          return { ok: true, pendingDiscard: true };
+        }
+        // AI：弃最没用的 n 张，再从牌组挑最好的一张
+        const sorted = s.hand.map((c, i) => ({ c, i })).sort((a, b) => this._mulliganValue(a.c) - this._mulliganValue(b.c));
+        const drop = sorted.slice(0, n).map(x => x.c);
         for (const c of drop) {
           const i = s.hand.indexOf(c);
-          if (i >= 0) { s.hand.splice(i, 1); s.graveyard.push(c); }
+          if (i >= 0) { s.hand.splice(i, 1); c.inGrave = true; s.graveyard.push(c); }
         }
-        const got = this._drawCards(s, 1);
-        got.forEach(c => s.hand.push(c));
-        this._log(sideName, `领袖「${leader.name.zh}」弃掉 ${drop.map(c => c.name.zh).join('、')}，抽到 ${got.map(c => c.name.zh).join('、') || '无'}`);
+        const got = this._takeBestFromPile(sideName, 1);
+        this._log(sideName, `领袖「${leader.name.zh}」弃掉 ${drop.map(c => c.name.zh).join('、')}，从牌组取出 ${got.map(c => c.name.zh).join('、') || '（牌组为空）'}`);
         break;
       }
       /* ---- 坟场取一张回手牌 ---- */
@@ -1079,10 +1188,11 @@ class GwentGame {
         break;
       }
       case 'frost_again': case 'fog_again': case 'rain_again': {
-        for (const k in this.weather) this.weather[k] = false;
+        // 只开自己那一排的天气，不动其它排（旧版会把场上所有天气清掉）
         const wk = e.split('_')[0];
-        this.weather[wk === 'frost' ? 'frost' : wk === 'fog' ? 'fog' : 'rain'] = true;
-        this._log(sideName, `领袖「${leader.name.zh}」召唤${WEATHER[wk === 'frost' ? 'frost' : wk === 'fog' ? 'fog' : 'rain'].zh}`);
+        const key = wk === 'frost' ? 'frost' : wk === 'fog' ? 'fog' : 'rain';
+        this.weather[key] = true;
+        this._log(sideName, `领袖「${leader.name.zh}」召唤${WEATHER[key].zh}`);
         break;
       }
       case 'take_enemy_hand': {
@@ -1164,6 +1274,70 @@ class GwentGame {
       }
     }
     return { ok: false, error: '没有可收回的单位' };
+  }
+
+  /** 从牌堆里取 n 张「最有价值」的牌进手牌（AI 用；玩家路径走 applyDeckPick） */
+  _takeBestFromPile(sideName, n) {
+    const s = this.side[sideName];
+    const out = [];
+    for (let k = 0; k < n; k++) {
+      if (!s.pile.length) break;
+      let bestI = 0, bestV = -Infinity;
+      s.pile.forEach((c, i) => { const v = this._mulliganValue(c); if (v > bestV) { bestV = v; bestI = i; } });
+      const c = s.pile.splice(bestI, 1)[0];
+      c.owner = sideName; s.hand.push(c);
+      out.push(c);
+    }
+    return out;
+  }
+
+  /** UI：领袖「世界毁灭者」第一步 —— 玩家选好要弃掉的 n 张手牌（uids） */
+  applyDiscard(sideName, uids) {
+    if (!this.pendingDiscard || this.pendingDiscard.side !== sideName) return { ok: false, error: '当前没有待完成的弃牌选择' };
+    const need = this.pendingDiscard.count;
+    const s = this.side[sideName];
+    const picks = [];
+    for (const uid of (uids || [])) {
+      const c = s.hand.find(x => x.uid === uid);
+      if (!c) return { ok: false, error: '手牌里没有这张牌' };
+      if (picks.includes(c)) return { ok: false, error: '同一张牌不能选两次' };
+      picks.push(c);
+    }
+    if (picks.length !== need) return { ok: false, error: `需要选择 ${need} 张（已选 ${picks.length} 张）` };
+    for (const c of picks) {
+      s.hand.splice(s.hand.indexOf(c), 1);
+      c.inGrave = true; c.placedRow = null; c._effective = null;
+      s.graveyard.push(c);
+    }
+    this._log(sideName, `领袖弃牌：${picks.map(c => c.name.zh).join('、')}`);
+    this.pendingDiscard = null;
+    if (s.pile.length) {
+      this.pendingDeckPick = { side: sideName, count: 1 };
+      this._log('sys', '请从牌组选择 1 张加入手牌');
+      this.refresh();
+      return { ok: true, pendingDeckPick: true };
+    }
+    this._log('sys', '牌组已空，没有牌可取');
+    this._afterPlay(sideName, []);
+    this.refresh();
+    return { ok: true };
+  }
+
+  /** UI：领袖「世界毁灭者」第二步 —— 玩家从牌组挑走一张 */
+  applyDeckPick(sideName, uid) {
+    if (!this.pendingDeckPick || this.pendingDeckPick.side !== sideName) return { ok: false, error: '当前没有待完成的取牌选择' };
+    const s = this.side[sideName];
+    const i = s.pile.findIndex(c => c.uid === uid);
+    if (i < 0) return { ok: false, error: '牌组里没有这张牌' };
+    const c = s.pile.splice(i, 1)[0];
+    c.owner = sideName;
+    s.hand.push(c);
+    this.pendingDeckPick = null;
+    this._log(sideName, `领袖从牌组取出「${c.name.zh}」加入手牌`);
+    this._emit([{ type: 'draw', card: c, side: sideName }]);
+    this._afterPlay(sideName, []);
+    this.refresh();
+    return { ok: true };
   }
 
   /** 记录出牌统计（结算界面用） */

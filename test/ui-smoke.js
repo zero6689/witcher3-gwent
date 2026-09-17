@@ -137,18 +137,28 @@ check('⑥ 非法牌组时开始按钮禁用', () => {
   assert(/不足/.test(ov.querySelector('.deck-msg').textContent), '应提示单位牌不足');
 });
 
-check('⑦ 一键填充 → 开始对战 → 换牌界面', () => {
+check('⑦ 一键填充 → 开始对战 → 开局调度界面（逐张换牌）', () => {
   const ov = doc.getElementById('overlay');
   fire(ov.querySelectorAll('[data-act]').find(e => e.dataset.act === 'auto'), 'click');
   assert(evalIn('DeckBuilder.stats().ok'), '一键填充后应合法');
   fire(doc.getElementById('overlay').querySelectorAll('[data-act]').find(e => e.dataset.act === 'start'), 'click');
   const picks = doc.getElementById('overlay').querySelectorAll('.deck-pick');
   assert(picks.length >= 10, `换牌界面手牌数 ${picks.length}`);
+  // 逐张调度：点一张牌 → 立刻换掉并重抽（旧版是勾选多张再一起换）
+  const g0 = evalIn('game');
+  const before = g0.side.player.hand[0].uid;
+  const first = doc.getElementById('overlay').querySelectorAll('.deck-pick')[0];
+  fire(first, 'click');
+  const g1 = evalIn('game');
+  assert(g1.mulliganUsed.player === 1, `点一张应立刻换 1 张（实际 ${g1.mulliganUsed.player}）`);
+  assert(!g1.side.player.hand.some(c => c.uid === before), '换掉的那张应离开手牌');
+  assert(g1.side.player.hand.length === 10, `换牌后手牌仍应是 10 张（实际 ${g1.side.player.hand.length}）`);
+  assert(doc.getElementById('overlay').querySelectorAll('.deck-pick').length === 10, '调度界面应重新渲染 10 张');
 });
 
 let g = null;
 check('⑧ 开始游戏 → 牌桌渲染', () => {
-  fire(doc.getElementById('mullNone'), 'click');
+  fire(doc.getElementById('mullConfirm'), 'click');
   g = evalIn('game');
   assert(g, '全局 game 未创建');
   assert(g.difficulty === 'hard', `难度应为 hard，实际 ${g.difficulty}`);
@@ -182,6 +192,30 @@ check('⑨b 坟场面板（双方可查）+ 战斗日志留痕', () => {
   assert(log && log.textContent.replace(/\s/g, '').length > 0, '战斗日志为空（对手打了什么牌必须留痕）');
 });
 
+check('⑨b2 战报面板（完整对战履历）+ 设置里的规则选项', () => {
+  const btns = doc.getElementById('actionButtons').querySelectorAll('button');
+  const logBtn = btns.find(b => /战报/.test(b.textContent));
+  assert(logBtn, '缺少「战报」按钮（对战履历需要像坟场那样的常驻入口）');
+  fire(logBtn, 'click');
+  const ov = doc.getElementById('overlay');
+  assert(ov.querySelectorAll('.log-modal').length === 1, '战报面板未打开');
+  const body = doc.getElementById('logFull');
+  assert(body && body.textContent.replace(/\s/g, '').length > 0, '战报面板里没有日志行');
+  fire(doc.getElementById('logClose'), 'click');
+  assert(ov._class.has('hidden'), '战报面板未关闭');
+  // 设置面板（音乐 + 规则选项）
+  const setBtn = btns.find(b => /设置/.test(b.textContent));
+  assert(setBtn, '缺少「设置」按钮');
+  fire(setBtn, 'click');
+  const opts = ov.querySelectorAll('[data-opt]');
+  assert(opts.length === 3, `规则选项应有 3 个（实际 ${opts.length}）`);
+  const before = evalIn('JSON.stringify(GAME_OPTIONS)');
+  fire(opts[0], 'click');
+  assert(evalIn('JSON.stringify(GAME_OPTIONS)') !== before, '点规则选项应改变 GAME_OPTIONS');
+  fire(opts[0], 'click');                          // 改回去
+  fire(doc.getElementById('spClose'), 'click');
+});
+
 check('⑨c 同袍倍率角标 + 召唤数量角标', () => {
   const g = evalIn('game');
   // 场上放两张同袍（各 ×2），手牌留一张同袍 + 一张召唤牌
@@ -206,6 +240,21 @@ check('⑨c 同袍倍率角标 + 召唤数量角标', () => {
   assert(/^🧲\d+$/.test(String(handMuster[0].textContent)), '召唤角标应显示牌堆里的同组张数');
 });
 
+check('⑨d 场上单位按基础战力从低到高排列（玩家反馈 #7）', () => {
+  evalIn(`(function(){
+    const mk = (id, p) => { const c = makeCard(ALL_CARDS[id]); c.owner='player'; c._side='player'; c.placedRow='melee'; if (p) c.power = p; return c; };
+    game.side.player.rows.melee = [];
+    game.side.player.rows.melee.push(mk('northern_blue_stripes_commando', 9));
+    game.side.player.rows.melee.push(mk('northern_ballista', 3));
+    game.side.player.rows.melee.push(mk('northern_catapult', 6));
+    game.refresh();
+  })();`);
+  evalIn('UI').render();
+  const powers = doc.getElementById('playerRows').querySelectorAll('.card.small .power').map(e => Number(e.textContent));
+  assert(powers.length === 3, `近战排应有 3 张（实际 ${powers.length}）`);
+  assert(powers.join(',') === '3,6,9', `应按 3,6,9 排列（实际 ${powers.join(',')}）`);
+});
+
 /* ---------------- 完整对局 ---------------- */
 (async () => {
   let steps = 0;
@@ -220,6 +269,18 @@ check('⑨c 同袍倍率角标 + 召唤数量角标', () => {
   try {
     while (!g.over && steps++ < 600) {
       if (g.pendingMedic) { g.applyMedic('player', g.pendingMedic.options[0]); evalIn('UI').render(); played.medic++; continue; }
+      if (g.pendingDiscard) {                            // 领袖「世界毁灭者」：弃 2 张
+        const uids = g.side.player.hand.slice(0, g.pendingDiscard.count).map(c => c.uid);
+        g.applyDiscard('player', uids);
+        evalIn('UI').render();
+        played.leader++;
+        continue;
+      }
+      if (g.pendingDeckPick) {                           // 再从牌组挑 1 张
+        g.applyDeckPick('player', g.side.player.pile[0].uid);
+        evalIn('UI').render();
+        continue;
+      }
       if (g.pendingFirstPick) { g.applyFirstChoice(false); evalIn('UI').render(); continue; }
       if (g.current === 'ai') {
         const ai = new (evalIn('GwentAI'))(g, g.aiSkill);
@@ -236,7 +297,11 @@ check('⑨c 同袍倍率角标 + 召唤数量角标', () => {
           if (c.kind === 'horn') { for (const r of ['melee', 'ranged', 'siege']) { if (g.playCard('player', i, r).ok) { did = true; played.horn++; break; } } }
           else if (c.kind === 'decoy') {
             const target = ['melee', 'ranged', 'siege'].flatMap(r => g.side.player.rows[r].filter(x => !x.tomb && x.type !== 'hero' && !x.spied)).map(x => x.uid)[0];
-            if (target != null && g.playCard('player', i, null).ok) { g.applyDecoy('player', target); did = true; played.decoy++; }
+            // 诱饵协议：playCard 返回 needTarget（ok=false 是正常的），拿到挂起状态后才能 applyDecoy
+            if (target != null) {
+              const res = g.playCard('player', i, null);
+              if (res.needTarget === 'decoy' && g.pendingDecoy) { g.applyDecoy('player', target); did = true; played.decoy++; }
+            }
           }
           else if (g.playCard('player', i, null).ok) { did = true; if (c.kind === 'weather') played.weather++; else if (c.kind === 'scorch') played.scorch++; }
         } else {

@@ -57,7 +57,7 @@ function showMainMenu() {
         <button class="mm-btn primary" data-mm="play">开始游戏</button>
         <button class="mm-btn" data-mm="config">配置卡牌</button>
         <button class="mm-btn" data-mm="intro">开场动画</button>
-        <button class="mm-btn" data-mm="sound">音乐与音效</button>
+        <button class="mm-btn" data-mm="sound">设置 · 音乐与规则</button>
         <button class="mm-btn" data-mm="about">关于 / 声明</button>
       </div>
       <div class="mm-foot">二创同人作品 · 非商业用途 · 仅供个人学习娱乐 · 卡面版权归 CD Projekt RED</div>
@@ -158,14 +158,21 @@ function openDeckBuilder(facKey, diffKey, configOnly) {
   }, configOnly);
 }
 
-/* ---------------- 设置面板（音乐 / 音效 / 重开 / 主菜单） ---------------- */
+/* ---------------- 设置面板（音乐 / 音效 / 规则选项 / 重开 / 主菜单） ---------------- */
 function showSoundPanel(returnTo) {
   const ov = document.getElementById('overlay');
   const bgmOk = typeof BGM !== 'undefined' && BGM.tracks.length > 0;
+  const opts = typeof GAME_OPTIONS !== 'undefined' ? GAME_OPTIONS : {};
+  const optRow = (key, label, desc) => `
+      <div class="sp-rule">
+        <span class="sp-label">${label}</span>
+        <div class="sp-desc">${desc}</div>
+        <button class="chip ${opts[key] ? 'active' : ''}" data-opt="${key}">${opts[key] ? '已开启' : '已关闭'}</button>
+      </div>`;
   ov.classList.remove('hidden');
   ov.innerHTML = `
     <div class="modal sound-panel">
-      <h2>音乐与音效</h2>
+      <h2>设置</h2>
       <div class="sp-row">
         <span class="sp-label">背景音乐</span>
         <button id="bgmToggle" class="chip ${bgmOk && BGM.enabled ? 'active' : ''}" ${bgmOk ? '' : 'disabled'}>
@@ -188,6 +195,11 @@ function showSoundPanel(returnTo) {
           ? `当前曲目：${BGM.current() ? BGM.current().title : ''}（共 ${BGM.tracks.length} 首）`
           : '未找到 BGM 文件 —— 把 widow-maker.mp3 放进 assets/audio/ 即可自动播放'}
       </div>
+      <h2 style="margin-top:4px">规则选项</h2>
+      <div class="hint">这几条「真规则」和「更好玩」有分歧，随你挑（对局中途改也立刻生效）</div>
+      ${optRow('musterAuto', '集合自动拉牌', '打开＝真规则：打出集合牌时把同组牌一起拉上场。关掉后集合牌就是一张普通单位牌（很多人觉得这样更有意思）。')}
+      ${optRow('musterFromHand', '集合连手牌一起拉', '打开＝真规则：手牌里的同组牌也会被强制打出去（会「吃掉」你的手牌）。关掉则只从牌组拉。')}
+      ${optRow('scoiataelEveryRound', '松鼠党每局都能定先手', '打开＝每小局都由松鼠党决定谁先手（更强）。关掉＝真规则：只有第一局能定。')}
       <div class="sp-actions">
         ${game && !game.over ? '<button id="spRestart" class="chip">重新开始</button>' : ''}
         <button id="spMenu" class="chip">返回主菜单</button>
@@ -207,6 +219,16 @@ function showSoundPanel(returnTo) {
   if (vol && bgmOk) vol.addEventListener('input', () => {
     BGM.setVolume(Number(vol.value) / 100);
     document.getElementById('bgmVolVal').textContent = vol.value + '%';
+  });
+  // 规则选项开关
+  ov.querySelectorAll('[data-opt]').forEach(el => {
+    el.addEventListener('click', () => {
+      const k = el.dataset.opt;
+      opts[k] = !opts[k];
+      if (typeof saveGameOptions === 'function') saveGameOptions();
+      if (typeof SFX !== 'undefined') SFX.play('click');
+      showSoundPanel(returnTo);
+    });
   });
   const close = () => {
     ov.classList.add('hidden'); ov.innerHTML = '';
@@ -267,49 +289,55 @@ function startGame(playerDeck, diffKey) {
   showMulliganUI();
 }
 
-/* ---------------- 换牌 UI ---------------- */
+/* ---------------- 换牌 UI（逐张调度） ----------------
+ * 真规则：选一张不想要的牌 → 立刻重抽一张，最多 2 次；换掉的牌先放在一边，
+ * 本次调度绝不会再被抽到，调度结束后才洗回牌堆。
+ * 旧版是「先勾选 N 张，再一起换」，与真规则不同（玩家反馈 #1）。
+ */
 function showMulliganUI() {
   const ov = document.getElementById('overlay');
   const g = game;
-  const hand = g.side.player.hand;
-  ov.classList.remove('hidden');
-  ov.innerHTML = `
-    <div class="modal">
-      <h2>开局换牌</h2>
-      <div class="hint">点击手牌可替换（最多 ${DECK_RULES.mulligan} 张）。替换后随机重抽。</div>
-      <div class="deck-grid" id="mullGrid">
-        ${hand.map((c, i) => `
-          <div class="deck-pick" data-i="${i}">
-            ${cardHtml(c)}
-            <div class="meta">${c.name.zh}</div>
-          </div>`).join('')}
-      </div>
-      <div style="display:flex;gap:10px;justify-content:center;margin-top:8px">
-        <button id="mullConfirm" class="primary">开始游戏</button>
-        <button id="mullNone">不换牌，直接开始</button>
-      </div>
-    </div>`;
+  const LIMIT = (typeof DECK_RULES !== 'undefined' && DECK_RULES.mulligan) || 2;
 
-  const selected = new Set();
-  ov.querySelectorAll('.deck-pick').forEach(el => {
-    el.addEventListener('click', () => {
-      const i = +el.dataset.i;
-      if (selected.has(i)) { selected.delete(i); el.style.outline = ''; }
-      else {
-        if (selected.size >= DECK_RULES.mulligan) { UI.toast(`最多换 ${DECK_RULES.mulligan} 张`); return; }
-        selected.add(i); el.style.outline = '2px solid var(--gold)';
-      }
-      document.getElementById('mullConfirm').textContent =
-        selected.size ? `换 ${selected.size} 张并开始` : '开始游戏';
+  const render = () => {
+    const hand = g.side.player.hand;
+    const used = () => (g.mulliganUsed && g.mulliganUsed.player) || 0;
+    const left = LIMIT - used();
+    ov.classList.remove('hidden');
+    ov.innerHTML = `
+      <div class="modal">
+        <h2>开局调度</h2>
+        <div class="hint">
+          点一张不想要的牌 → <b>立刻重抽一张</b>（最多 ${LIMIT} 次，已用 ${used()} 次）<br>
+          换掉的牌本次调度<b>不会再被抽到</b>，全部换完后才洗回牌堆。
+        </div>
+        <div class="deck-grid" id="mullGrid">
+          ${hand.map((c, i) => `
+            <div class="deck-pick" data-i="${i}">
+              ${cardHtml(c)}
+              <div class="meta">${c.name.zh}</div>
+            </div>`).join('')}
+        </div>
+        <div style="display:flex;gap:10px;justify-content:center;margin-top:8px">
+          <button id="mullConfirm" class="primary">${left > 0 ? '不换了，开始游戏' : '开始游戏'}</button>
+        </div>`;
+    ov.querySelectorAll('#mullGrid .deck-pick').forEach(el => {
+      el.addEventListener('click', () => {
+        const i = +el.dataset.i;
+        if (g.mulliganUsed.player >= LIMIT) { UI.toast(`最多换 ${LIMIT} 张`); return; }
+        const res = g.mulliganSwap('player', i);
+        if (!res.ok) { UI.toast(res.error || '换牌失败'); return; }
+        if (typeof SFX !== 'undefined') SFX.play('card');
+        UI.toast(`换掉「${res.out.name.zh}」${res.in ? `，重抽到「${res.in.name.zh}」` : ''}${res.left ? `（还能换 ${res.left} 张）` : '（调度结束）'}`);
+        render();
+      });
     });
-  });
+    document.getElementById('mullConfirm').addEventListener('click', finish);
+  };
 
-  const finish = (replacements) => {
+  const finish = () => {
     ov.classList.add('hidden'); ov.innerHTML = '';
-    if (replacements.length) {
-      g.doMulligan(replacements.map(i => ({ side: 'player', index: i })));
-    }
-    g.finishMulligan();                 // 内部会先让 AI 完成换牌，再开第一局
+    g.finishMulligan();                 // 内部会先让 AI 完成换牌，再把换掉的牌洗回牌堆，然后开第一局
     if (typeof SFX !== 'undefined') SFX.play('card');
     UI.init(game);
     UI.render();
@@ -317,10 +345,7 @@ function showMulliganUI() {
     if (g.current === 'ai') UI.scheduleAI();
   };
 
-  document.getElementById('mullConfirm').addEventListener('click', () => {
-    finish([...selected].sort((a, b) => b - a));
-  });
-  document.getElementById('mullNone').addEventListener('click', () => finish([]));
+  render();
 }
 
 /* ---------------- 卡牌 HTML 片段 ---------------- */
@@ -466,6 +491,8 @@ function factionArtList(facKey) {
 
 /* ---------------- 启动 ---------------- */
 window.addEventListener('DOMContentLoaded', () => {
+  // 读回上次的规则选项（集合 / 松鼠党被动）
+  if (typeof loadGameOptions === 'function') loadGameOptions();
   // 注册 Service Worker（可安装 / 离线）
   if (typeof navigator !== 'undefined' && navigator.serviceWorker && navigator.serviceWorker.register && location.protocol.startsWith('http')) {
     navigator.serviceWorker.register('sw.js').catch(() => { /* 忽略 */ });

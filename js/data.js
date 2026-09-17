@@ -42,7 +42,7 @@ const LEADERS = {
     // 依据：asundr/gwent-classic abilities.js（eredin_commander / eredin_bringer_of_death / eredin_destroyer / eredin_king）
     { id: 'monsters_eredin_commander_of_the_red_riders', name: { zh: '艾瑞汀·赤色骑士统帅', en: 'Eredin: Commander of the Red Riders' }, effect: 'double_melee', desc: '己方近战排单位战力翻倍（该排已有号角时不叠加）' },
     { id: 'monsters_eredin_bringer_of_death', name: { zh: '艾瑞汀·死亡使者', en: 'Eredin: Bringer of Death' }, effect: 'revive_to_hand', desc: '从己方坟场取一张牌加入手牌' },
-    { id: 'monsters_eredin_destroyer_of_worlds', name: { zh: '艾瑞汀·世界毁灭者', en: 'Eredin: Destroyer of Worlds' }, effect: 'discard_2_draw_1', desc: '弃掉 2 张牌，然后抽 1 张牌' },
+    { id: 'monsters_eredin_destroyer_of_worlds', name: { zh: '艾瑞汀·世界毁灭者', en: 'Eredin: Destroyer of Worlds' }, effect: 'discard_2_draw_1', desc: '由你选择弃掉 2 张手牌，再从牌组里挑 1 张加入手牌' },
     { id: 'monsters_eredin_king_of_the_wild_hunt', name: { zh: '艾瑞汀·狂猎之王', en: 'Eredin: King of the Wild Hunt' }, effect: 'deck_weather_any', desc: '从牌组取出一张天气牌并使用' },
   ],
 };
@@ -198,7 +198,7 @@ const ABILITY_CN = {
   spy: '间谍：置于对方场上（计入对方战力），你抽 2 张牌',
   medic: '医生：出场时可从己方坟场复活一张单位',
   tight_bond: '同袍：同排每多一张同名卡，每张战力就再乘一倍（n 张 → 每张 ×n，该排合计 ×n²）',
-  muster: '召唤：从牌组把同组（同名）卡牌全部拉上场（手上的同组牌不会自动上场）',
+  muster: '召唤：把同组卡牌全部拉上场（默认只从牌组拉；可在「设置」里改成连手牌一起拉）',
   morale_boost: '鼓舞：己方同行其它单位 +1 战力',
   commanders_horn: '号角：所在排己方非英雄单位 ×2',
   scorch: '焚风：金龙进场时，若对方同排总战力 ≥10，摧毁该排最强的非英雄单位',
@@ -237,6 +237,41 @@ for (const fac of Object.keys(LEADERS)) {
 
 /* ---------------- 组牌规则（巫师3 原版） ---------------- */
 const DECK_RULES = { minUnits: 22, maxUnits: 40, maxSpecials: 10, mulligan: 2 };
+
+/* ---------------- 可调规则选项（设置面板 → 引擎实时读取） ----------------
+ * 这些是「真规则 vs 更好玩」有分歧的地方，玩家自己选。默认值 = 最接近巫师3 原版。
+ * 引擎持有的是同一个对象引用 ⇒ 中途改设置立刻生效（不必重开一局）。
+ */
+const GAME_OPTIONS = {
+  // 集合（muster）：打出后是否把同组卡牌全部拉上场。关闭后集合牌只是一张普通单位牌。
+  musterAuto: true,
+  // 集合是否连【手牌】里的同组牌一起拉（真规则；会让手牌被强制打出）
+  musterFromHand: true,
+  // 松鼠党阵营被动「决定先手」是否每小局都能用（真规则：只有第一局）
+  scoiataelEveryRound: false,
+};
+const GAME_OPTIONS_KEY = 'gwent.options.v1';
+
+/** 从 localStorage 读回选项（浏览器；无 localStorage 时静默跳过） */
+function loadGameOptions() {
+  try {
+    if (typeof localStorage === 'undefined' || !localStorage.getItem) return GAME_OPTIONS;
+    const raw = localStorage.getItem(GAME_OPTIONS_KEY);
+    if (raw) {
+      const obj = JSON.parse(raw);
+      for (const k of Object.keys(GAME_OPTIONS)) if (typeof obj[k] === 'boolean') GAME_OPTIONS[k] = obj[k];
+    }
+  } catch (e) { /* 隐私模式 / 坏数据 → 用默认值 */ }
+  return GAME_OPTIONS;
+}
+
+/** 写回选项 */
+function saveGameOptions() {
+  try {
+    if (typeof localStorage === 'undefined' || !localStorage.setItem) return;
+    localStorage.setItem(GAME_OPTIONS_KEY, JSON.stringify(GAME_OPTIONS));
+  } catch (e) { /* 忽略 */ }
+}
 
 /* ---------------- 难度 ---------------- */
 const DIFFICULTIES = {

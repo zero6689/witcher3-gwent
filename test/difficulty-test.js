@@ -94,6 +94,7 @@ function playerValue(g, c, ROWS, WEATHER) {
 
 function playerTurn(g, ROWS, WEATHER) {
   const side = g.side.player;
+  if (g.pendingDiscard || g.pendingDeckPick) return;      // 等外层结算领袖选择
   if (g.passed.ai && g.scores.player > g.scores.ai) { g.pass('player'); return; }
   if (g.canUseLeader('player')) {
     const eff = g.side.player.deck.leader.effect;
@@ -128,6 +129,11 @@ async function playMatch(ctx, diffKey, seed) {
   let guard = 0;
   while (!g.over && guard++ < 800) {
     if (g.pendingMedic) { g.applyMedic('player', g.pendingMedic.options[0]); continue; }
+    if (g.pendingDiscard) {
+      g.applyDiscard('player', g.side.player.hand.slice(0, g.pendingDiscard.count).map(c => c.uid));
+      continue;
+    }
+    if (g.pendingDeckPick) { g.applyDeckPick('player', g.side.player.pile[0].uid); continue; }
     if (g.pendingFirstPick) { g.applyFirstChoice(false); continue; }
     if (g.current === 'ai') {
       const act = await ai.act();

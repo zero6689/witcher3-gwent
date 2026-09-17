@@ -896,7 +896,7 @@ button.primary {
   width: var(--cardw);
   height: calc(var(--cardw) * 1.375);
   position: relative;
-  margin-left: calc(var(--cardw) * -0.47);   /* 层叠错开：约露出 53% 宽度 */
+  margin-left: calc(var(--cardw) * var(--ovl, -0.47));   /* 层叠错开：约露出 53% 宽度；够宽时由 JS 设成 0（不重叠） */
   transition: transform .16s cubic-bezier(.2,.8,.25,1), box-shadow .16s;
   box-shadow: -3px 0 8px rgba(0,0,0,.75), 0 2px 6px rgba(0,0,0,.75);
   will-change: transform;
@@ -954,7 +954,7 @@ button.primary {
  *  900p  → 65px
  *  768p  → 51px（原来 64px 会把手牌挤到屏幕外 108px）
  * ============================================================ */
-:root { --fit-cardw: clamp(44px, calc((100vh - 271px) / 9.625), 68px); }
+:root { --fit-cardw: clamp(44px, calc((100vh - 271px) / 9.625), 80px); }
 
 @media (min-width: 901px) {
   .hand .card {
@@ -1708,3 +1708,23 @@ body { overflow-y: auto; overflow-x: hidden; }
   .pool-card .card { height: 74px; }
   .deck-grid { grid-template-columns: repeat(auto-fill, minmax(54px, 1fr)); }
 }
+
+/* ============================================================
+ *  战报弹窗（完整对战履历）—— 底栏那份是滚动快照，太长的对局看不到开头
+ *  （玩家反馈 #7：给对战履历一个「坟场」那样的常驻按钮）
+ * ============================================================ */
+.log-modal { width: min(780px, 94vw); }
+.log-full {
+  text-align: left; max-height: 56vh; min-height: 140px; overflow-y: auto;
+  background: rgba(0,0,0,.35); border: 1px solid rgba(122,92,51,.35);
+  border-radius: 6px; padding: 8px 10px; font-size: 12.5px; line-height: 1.55;
+  color: var(--text-dim);
+}
+.log-full .lg-me { color: #9fdcff; }
+.log-full .lg-ai { color: #ffb59e; }
+.log-full .lg-sys { color: var(--gold); }
+
+/* 规则选项（设置面板） */
+.sp-rule { display: flex; align-items: flex-start; gap: 10px; padding: 6px 0; border-top: 1px solid rgba(122,92,51,.25); }
+.sp-rule .sp-label { min-width: 116px; font-size: 12.5px; color: var(--gold-hi); }
+.sp-rule .sp-desc { flex: 1 1 auto; font-size: 11px; color: var(--text-dim); line-height: 1.45; }

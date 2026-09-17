@@ -89,7 +89,7 @@ const UI = {
   /* ---------------- 坟场查看（双方都可查） ---------------- */
   showGraveyard(side) {
     const g = this.g;
-    if (!g || g.needMulligan || g.pendingMedic || g.pendingFirstPick) return;   // 有未完成的选择时不打断
+    if (!g || g.needMulligan || (g.hasPendingChoice && g.hasPendingChoice())) return;   // 有未完成的选择时不打断
     const ov = this.el('overlay');
     const sName = side === 'ai' ? '对手' : '你';
     const cards = g.side[side].graveyard.slice().reverse();
@@ -116,7 +116,7 @@ const UI = {
     });
     document.getElementById('graveClose').addEventListener('click', () => {
       ov.classList.add('hidden'); ov.innerHTML = '';
-      if (g.pendingMedic || g.pendingFirstPick) { this.render(); this.checkPending(); return; }
+      if (g.hasPendingChoice && g.hasPendingChoice()) { this.render(); this.checkPending(); return; }
       if (g.over) { this._shownResults = false; this.showResults(); }
       else this.render();
     });
@@ -436,7 +436,9 @@ const UI = {
       const cardsWrap = document.createElement('div');
       cardsWrap.className = 'rowcards';
       let z = 0;
-      for (const c of side.rows[r]) {
+      // 场上单位按【基础战力】从低到高排列（玩家反馈 #7；只影响显示顺序，不动引擎数据）
+      const sorted = side.rows[r].slice().sort((a, b) => (a.power || 0) - (b.power || 0));
+      for (const c of sorted) {
         if (c.tomb) continue;
         const cardEl = this._boardCard(c, sideName, r);
         cardEl.style.zIndex = z++;          // 新牌叠在旧牌上方
@@ -457,33 +459,58 @@ const UI = {
   },
 
   /** 牌桌能承受的最大卡宽：由视口高度反推，保证「3+3 排 + 手牌」尽量一屏放下
-   *  竖向占用 ≈ 9.625 × 卡宽 + 271px（顶栏 + 中线 + 控制栏 + 手牌内边距） */
+   *  竖向占用 ≈ 9.625 × 卡宽 + 271px（顶栏 + 中线 + 控制栏 + 手牌内边距）
+   *  上限 80px：1080p 以上屏幕本来还能更大，旧版死卡在 68px（再配上层叠，显得又小又挤） */
   _maxRowCardW() {
     const vh = (typeof window !== 'undefined' && window.innerHeight) || 0;
     const vw = (typeof window !== 'undefined' && window.innerWidth) || 0;
     if (!vh || vw <= 900) return 64;               // 手机/窄屏沿用原有固定尺寸
-    return Math.max(44, Math.min(68, Math.floor((vh - 271) / 9.625)));
+    return Math.max(44, Math.min(80, Math.floor((vh - 271) / 9.625)));
   },
 
-  /** 根据本排卡牌数量与可用宽度，计算合适的卡牌宽度（层叠后仍全部可见） */
+  /** 根据本排卡牌数量与可用宽度，计算合适的卡牌宽度（层叠后仍全部可见）
+   *  修正（玩家反馈 #7）：屏幕够宽时「没必要堆叠在一起」——
+   *  只要每张牌能摊开到 ≥ 40px 就不重叠；实在排不下才退回层叠（露出 53%）。
+   *  层叠量通过 CSS 变量 --ovl 传给样式表（默认 -0.47）。 */
   _fitRowCards(cardsWrap, rowDiv) {
     const n = cardsWrap.children.length;
     if (!n) return;
     const rowW = (rowDiv && rowDiv.clientWidth) || (this.el('table') && this.el('table').clientWidth) || 0;
     if (!rowW) return;                       // 无布局信息（测试环境）→ 用 CSS 默认值
     const avail = Math.max(180, rowW - 56);  // 减去左侧计分区
+    const maxW = this._maxRowCardW();
+    const flat = Math.floor(avail / n);      // 完全不重叠时每张能分到多少
+    if (flat >= 40) {
+      const w = Math.min(maxW, flat);
+      rowDiv.style.setProperty('--cardw', w + 'px');
+      rowDiv.style.setProperty('--ovl', '0');
+      return;
+    }
     // 每张牌可见宽度 = cardw * 0.53（首张为 1.0）→ 总宽 = cardw * (1 + 0.53*(n-1))
     const factor = 1 + 0.53 * (n - 1);
     let w = Math.floor(avail / factor);
-    w = Math.max(34, Math.min(this._maxRowCardW(), w));
+    w = Math.max(34, Math.min(maxW, w));
     rowDiv.style.setProperty('--cardw', w + 'px');
+    rowDiv.style.setProperty('--ovl', '-0.47');
   },
 
   _rowPlayable(sideName, r) {
     const g = this.g;
+    if (!g.isPlayerTurn() || g.passed.player) return false;
+    // 需要选排的目标模式：把合法排高亮出来（不看 sel 是否为空）
+    if (this.targetMode === 'row-for-horn') return sideName === 'player';
+    if (this.targetMode === 'row-for-spy') {
+      if (sideName !== 'ai') return false;
+      const c = g.side.player.hand[this.sel];
+      return !!c && g.cardFitsRow(c, r);
+    }
+    if (this.targetMode === 'row-for-unit') {
+      if (sideName !== 'player') return false;
+      const c = g.side.player.hand[this.sel];
+      return !!c && g.cardFitsRow(c, r);
+    }
     if (this.targetMode) return false;
-    if (!g.isPlayerTurn() || sideName !== 'player') return false;
-    if (g.passed.player) return false;
+    if (sideName !== 'player') return false;
     if (this.sel == null) return false;
     const card = g.side.player.hand[this.sel];
     if (!card) return false;
@@ -696,6 +723,20 @@ const UI = {
     grave.title = '查看双方坟场（对手打过的牌都在这里）';
     grave.addEventListener('click', () => this.showGraveyard('player'));
     box.appendChild(grave);
+    // 战报（完整对战履历；底栏那份只有滚动快照）
+    const logBtn = document.createElement('button');
+    logBtn.textContent = '📜 战报';
+    logBtn.title = '查看完整对战履历（对手出牌 / 领袖技 / 焚风……全部留痕）';
+    logBtn.addEventListener('click', () => this.showLog());
+    box.appendChild(logBtn);
+    // 设置（含「集合 / 松鼠党被动」等规则开关，中途改也立刻生效）
+    const setBtn = document.createElement('button');
+    setBtn.textContent = '⚙ 设置';
+    setBtn.title = '音乐、音效与规则选项';
+    setBtn.addEventListener('click', () => {
+      if (typeof showSoundPanel === 'function') showSoundPanel(() => this.render());
+    });
+    box.appendChild(setBtn);
     if (g.over) {
       const again = document.createElement('button');
       again.className = 'primary';
@@ -753,7 +794,7 @@ const UI = {
     }, ms);
   },
 
-  /* ---------------- 交互：点卡即自动上场 ---------------- */
+  /* ---------------- 交互：点卡 → 需要选目标就先选，否则直接上场 ---------------- */
   onHandClick(i) {
     const g = this.g;
     if (this.targetMode || this._busy) return;
@@ -761,28 +802,57 @@ const UI = {
     const c = g.side.player.hand[i];
     if (!c) return;
 
-    // 需要指定目标的特殊牌：诱饵（选己方单位）
+    // 诱饵：必须让【引擎】先挂起「待选目标」，否则 applyDecoy 无从下手
+    //（旧版 UI 自己进 targetMode、引擎里 pendingDecoy 始终为空 → 诱饵点了没反应/卡在选目标模式）
     if (c.type === 'special' && c.kind === 'decoy') {
-      this.enterTargetMode('decoy');
+      const res = g.playCard('player', i, null);
+      if (res.needTarget === 'decoy') { this.sel = i; this.enterTargetMode('decoy'); }
+      else this.toast(res.error || '诱饵现在打不出去');
+      return;
+    }
+
+    // 号角：由玩家自己选排放（旧版自动挑一排，玩家无法干预）
+    if (c.type === 'special' && c.kind === 'horn') {
+      this.sel = i;
+      this._busy = true;
+      this.showcase(c, () => {
+        this._busy = false;
+        if (this.g !== g) return;
+        this.enterTargetMode('row-for-horn');
+      });
+      return;
+    }
+
+    // 可放多排的单位（敏捷 / 多排）：由玩家选排放（旧版自动选，玩家无法干预）
+    if (c.type !== 'special' && g.needsRowChoice(c)) {
+      this.sel = i;
+      this._busy = true;
+      this.showcase(c, () => {
+        this._busy = false;
+        if (this.g !== g) return;
+        this.enterTargetMode(c.ability === 'spy' ? 'row-for-spy' : 'row-for-unit');
+      });
       return;
     }
 
     // 其余全部「点一下直接打到对应位置」
-    let targetRow = null;
-    if (c.type === 'special' && c.kind === 'horn') targetRow = this._bestHornRow();
-    else if (c.type !== 'special') targetRow = this._autoRow(c);
+    const targetRow = c.type !== 'special' ? this._autoRow(c) : null;
+    this._commitPlay(i, targetRow);
+  },
 
-    // 记录手牌位置，供飞行动画
+  /** 中央展示 → 真正打出（含飞行动画）。i = 手牌索引，targetRow 可空 */
+  _commitPlay(i, targetRow) {
+    const g = this.g;
+    const c = g.side.player.hand[i];
+    if (!c) return;
     const srcEl = this.el('playerHand') && this.el('playerHand').querySelectorAll('.card')[i];
     const srcRect = srcEl && srcEl.getBoundingClientRect ? srcEl.getBoundingClientRect() : null;
     const isSpecial = c.type === 'special';
-
-    // 先中央展示，再真正打出
     this._busy = true;
     this.showcase(c, () => {
       this._busy = false;
       if (this.g !== g) return;                 // 期间已重开
-      const res = g.playCard('player', i, targetRow);
+      const res = g.playCard('player', i, targetRow || null);
       if (res.ok) {
         this.sel = null;
         if (typeof SFX !== 'undefined') SFX.play('card');
@@ -842,14 +912,19 @@ const UI = {
   },
 
   enterTargetMode(mode) {
-    this.sel = null;
     this.targetMode = mode;
     if (mode === 'decoy') {
-      // 检查是否场上有可收回单位
-      const has = ROWS.some(r => g.side.player.rows[r].some(c => !c.tomb && c.type !== 'hero' && !c.spied));
-      if (!has) { this.toast('场上没有可收回的单位'); this.targetMode = null; this.render(); return; }
+      // 引擎已经检查过有目标；这里再兜一层（防 UI 状态漂移）
+      const has = ROWS.some(r => this.g.side.player.rows[r].some(c => !c.tomb && c.type !== 'hero' && !c.spied));
+      if (!has) { this.toast('场上没有可收回的单位'); this.targetMode = null; this.g.pendingDecoy = null; this.sel = null; this.render(); return; }
     }
-    this.toast(mode === 'row-for-horn' ? '选择要放置号角的己方排' : '选择要收回的己方单位');
+    const tips = {
+      'decoy': '选择要收回的己方单位（点其它地方可取消）',
+      'row-for-horn': '选择要放置号角的己方排',
+      'row-for-unit': '该单位可放两排 —— 点击要放置的排',
+      'row-for-spy': '选择把间谍放到对方的哪一排',
+    };
+    this.toast(tips[mode] || '请选择目标');
     this.render();
   },
 
@@ -857,29 +932,33 @@ const UI = {
     const g = this.g;
     if (this.targetMode === 'row-for-horn') {
       if (sideName !== 'player') return;
-      // 找手牌里的号角
-      const c = g.side.player.hand.find(c => c.type === 'special' && c.kind === 'horn');
-      if (!c) return;
+      const c = g.side.player.hand.find(h => h.type === 'special' && h.kind === 'horn');
+      if (!c) { this.cancelTarget(); return; }
       const idx = g.side.player.hand.indexOf(c);
-      const res = g.playCard('player', idx, r);
       this.targetMode = null;
-      if (res.ok) { this.sel = null; this.afterAction(); }
-      else this.toast(res.error);
+      this._commitPlay(idx, r);
+      return;
+    }
+    if (this.targetMode === 'row-for-unit' || this.targetMode === 'row-for-spy') {
+      const want = this.targetMode === 'row-for-spy' ? 'ai' : 'player';
+      if (sideName !== want) return;
+      const idx = this.sel;
+      if (idx == null) { this.cancelTarget(); return; }
+      this.targetMode = null;
+      this._commitPlay(idx, r);
       return;
     }
     if (this.sel == null || !this._rowPlayable(sideName, r)) return;
-    const c = g.side.player.hand[this.sel];
-    const res = g.playCard('player', this.sel, r);
-    if (res.ok) { this.sel = null; this.afterAction(); }
-    else this.toast(res.error || '不能放在这里');
+    this._commitPlay(this.sel, r);
   },
 
   onDecoyTarget(uid) {
     const g = this.g;
     const res = g.applyDecoy('player', uid);
     this.targetMode = null;
-    if (res.ok) { this.sel = null; this.afterAction(); }
-    else this.toast(res.error || '收回失败');
+    this.sel = null;
+    if (res.ok) { this.afterAction(); }
+    else { this.toast(res.error || '收回失败'); this.render(); }
   },
 
   onPass() {
@@ -898,6 +977,9 @@ const UI = {
   /* 换牌：开局换牌由 main.js 的弹窗统一处理（见 showMulliganUI） */
 
   cancelTarget() {
+    const g = this.g;
+    // 同时取消引擎里的挂起（否则 pendingDecoy/pendingHorn 会一直卡住后续操作）
+    if (g) { g.pendingDecoy = null; g.pendingHorn = null; }
     this.targetMode = null;
     this.sel = null;
     this.render();
@@ -912,10 +994,13 @@ const UI = {
     if (g.current === 'ai') this.scheduleAI();
   },
 
-  /** 引擎挂起的「必须由玩家决定」的选择（医生复活 / 松鼠党决定先手） */
+  /** 引擎挂起的「必须由玩家决定」的选择
+   *（医生复活 / 松鼠党决定先手 / 领袖弃牌+取牌） */
   checkPending() {
     const g = this.g;
     if (g.pendingMedic) { this.showMedicModal(); return true; }
+    if (g.pendingDiscard) { this.showDiscardModal(); return true; }
+    if (g.pendingDeckPick) { this.showDeckPickModal(); return true; }
     if (g.pendingFirstPick) { this.showFirstPickModal(); return true; }
     return false;
   },
@@ -979,6 +1064,133 @@ const UI = {
       el.addEventListener('click', () => pick(+el.dataset.uid));
     });
     document.getElementById('medicSkip').addEventListener('click', () => pick(-1));
+  },
+
+  /* ---------------- 领袖「世界毁灭者」：先弃 2 张（玩家自选） ---------------- */
+  showDiscardModal() {
+    const g = this.g;
+    const ov = this.el('overlay');
+    const need = g.pendingDiscard.count;
+    const hand = g.side.player.hand.slice();
+    const picked = new Set();
+    ov.classList.remove('hidden');
+    ov.innerHTML = `
+      <div class="modal">
+        <h2>领袖技：弃掉 ${need} 张牌</h2>
+        <div class="hint">由你自己选（旧版是随机/自动弃最弱的）。弃掉的牌进坟场，之后还能被医生复活。</div>
+        <div class="deck-grid" id="disGrid">
+          ${hand.map(c => `
+            <div class="deck-pick" data-uid="${c.uid}">
+              ${cardHtml(c)}
+              <div class="meta">${c.name.zh} · ${c.type === 'special' ? '特殊牌' : c.power}</div>
+            </div>`).join('')}
+        </div>
+        <div class="sp-actions">
+          <button id="disOk" class="primary" disabled>确认弃牌（0/${need}）</button>
+        </div>
+      </div>`;
+    const ok = document.getElementById('disOk');
+    const sync = () => {
+      ok.disabled = picked.size !== need;
+      ok.textContent = `确认弃牌（${picked.size}/${need}）`;
+      ov.querySelectorAll('#disGrid .deck-pick').forEach(el => {
+        el.style.outline = picked.has(+el.dataset.uid) ? '2px solid var(--gold)' : '';
+      });
+    };
+    ov.querySelectorAll('#disGrid .deck-pick').forEach(el => {
+      el.addEventListener('click', () => {
+        const uid = +el.dataset.uid;
+        if (picked.has(uid)) picked.delete(uid);
+        else if (picked.size < need) picked.add(uid);
+        else { this.toast(`只需要选 ${need} 张`); return; }
+        sync();
+      });
+    });
+    ok.addEventListener('click', () => {
+      const res = g.applyDiscard('player', [...picked]);
+      if (!res.ok) { this.toast(res.error || '弃牌失败'); return; }
+      ov.classList.add('hidden'); ov.innerHTML = '';
+      this.render();
+      if (this.checkPending()) return;         // 接着选从牌组取哪一张
+      if (g.current === 'ai') this.scheduleAI();
+    });
+    sync();
+  },
+
+  /* ---------------- 领袖「世界毁灭者」：从牌组挑 1 张（玩家自选） ---------------- */
+  showDeckPickModal() {
+    const g = this.g;
+    const ov = this.el('overlay');
+    const pile = g.side.player.pile.slice()
+      .sort((a, b) => (b.power || 0) - (a.power || 0) || String(a.name.zh).localeCompare(String(b.name.zh)));
+    if (!pile.length) {
+      // 牌组为空（理论上引擎不会挂起）→ 直接结算
+      ov.classList.add('hidden'); ov.innerHTML = '';
+      g.pendingDeckPick = null;
+      this.afterAction();
+      return;
+    }
+    ov.classList.remove('hidden');
+    ov.innerHTML = `
+      <div class="modal">
+        <h2>从牌组挑 1 张</h2>
+        <div class="hint">牌组还剩 ${pile.length} 张 —— 由你自己挑（旧版是随机抽一张）。</div>
+        <div class="deck-grid">
+          ${pile.map(c => `
+            <div class="deck-pick" data-uid="${c.uid}">
+              ${cardHtml(c)}
+              <div class="meta">${c.name.zh} · ${c.type === 'special' ? '特殊牌' : c.power}</div>
+            </div>`).join('')}
+        </div>
+        <div class="sp-actions">
+          <button id="dpSkip">不取牌</button>
+        </div>
+      </div>`;
+    const pick = (uid) => {
+      ov.classList.add('hidden'); ov.innerHTML = '';
+      const res = g.applyDeckPick(uid);
+      if (!res.ok) { this.toast(res.error || '取牌失败'); return; }
+      this.render();
+      if (this.checkPending()) return;
+      if (g.current === 'ai') this.scheduleAI();
+    };
+    ov.querySelectorAll('.deck-pick').forEach(el => {
+      el.addEventListener('click', () => pick(+el.dataset.uid));
+    });
+    document.getElementById('dpSkip').addEventListener('click', () => {
+      ov.classList.add('hidden'); ov.innerHTML = '';
+      g.pendingDeckPick = null;
+      g._afterPlay('player', []);
+      g.refresh();
+      this.render();
+      if (g.current === 'ai') this.scheduleAI();
+    });
+  },
+
+  /* ---------------- 战报（完整对战履历；底栏那份是滚动快照，太长看不了） ---------------- */
+  showLog() {
+    const g = this.g;
+    if (!g) return;
+    const ov = this.el('overlay');
+    const cls = { player: 'lg-me', ai: 'lg-ai', sys: 'lg-sys' };
+    const who = { player: '你', ai: '对手', sys: '系统' };
+    ov.classList.remove('hidden');
+    ov.innerHTML = `
+      <div class="modal log-modal">
+        <h2>战报 · 共 ${g.log.length} 条</h2>
+        <div class="hint">对手打了什么牌、领袖技做了什么、焚风摧毁了什么，全在这里（最新的在最下面）</div>
+        <div class="log-full" id="logFull">
+          ${g.log.map(l => `<div class="${cls[l.who] || 'lg-sys'}">${l.who === 'sys' ? '' : this._esc(who[l.who]) + '：'}${this._esc(l.msg)}</div>`).join('')}
+        </div>
+        <div class="sp-actions"><button id="logClose" class="primary">关闭</button></div>
+      </div>`;
+    const host = document.getElementById('logFull');
+    if (host) host.scrollTop = host.scrollHeight;
+    document.getElementById('logClose').addEventListener('click', () => {
+      ov.classList.add('hidden'); ov.innerHTML = '';
+      if (this.g && this.g.hasPendingChoice && this.g.hasPendingChoice()) { this.render(); this.checkPending(); return; }
+      this.render();
+    });
   },
 
   scheduleAI() {

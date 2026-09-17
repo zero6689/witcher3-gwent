@@ -328,9 +328,13 @@ class GwentAI {
       return { row: this._pickRowFor(card), value: 35 + (best.power || 0) * 1.2, type: 'medic' };
     }
     if (card.ability === 'muster') {
-      const group = card.mg || card.defId;
-      const inDeck = side.pile.filter(c => (c.mg || c.defId) === group).length;
-      return { row: this._pickRowFor(card), value: (card.power || 0) * (1 + inDeck) * 1.4 + (inDeck ? 15 : 0), type: 'unit' };
+      // 用引擎的组判定（对称）算「牌堆 + 手牌」能拉出多少张；关掉拉牌/手牌拉牌时价值随之降低
+      const auto = typeof g._opt !== 'function' || g._opt('musterAuto', true);
+      const fromHand = typeof g._opt !== 'function' || g._opt('musterFromHand', true);
+      const inDeck = auto ? g.musterDeckCount('ai', card) : 0;
+      const inHand = auto && fromHand ? g.musterHandCount('ai', card) : 0;
+      const pulled = inDeck + inHand;
+      return { row: this._pickRowFor(card), value: (card.power || 0) * (1 + pulled) * 1.4 + (pulled ? 15 : 0), type: 'unit' };
     }
     if (card.ability === 'tight_bond') {
       const row = this._pickRowFor(card);
@@ -401,10 +405,12 @@ class GwentAI {
 
     if (pick.type === 'decoy') {
       const res = g.playCard('ai', handIndex, null);
-      if (res.ok && g.pendingDecoy && pick.targetUid != null) {
+      // 诱饵是「挂起等目标」型：引擎返回 needTarget（ok=false 是正常的），别拿 ok 判断
+      if (res.needTarget === 'decoy' && g.pendingDecoy && pick.targetUid != null) {
         g.applyDecoy('ai', pick.targetUid);
         return 'ai-play-decoy';
       }
+      if (g.pendingDecoy) g.pendingDecoy = null;      // 没选到目标就别留着挂起状态
       // 诱饵失败 → 换别的牌
       const alt = this._choosePlayExcluding(handIndex);
       return alt ? this._execute(alt) : null;

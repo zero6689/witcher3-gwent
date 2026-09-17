@@ -32,6 +32,12 @@ async function runOnce(playerFac, aiFac, seedLabel) {
   const actions = [];
   while (!g.over && guard++ < 600) {
     if (g.pendingMedic) { g.applyMedic('player', g.pendingMedic.options[0]); continue; }
+    // 领袖「世界毁灭者」：弃 2 张 + 从牌组取 1 张，都必须由调用方结算（否则会原地空转）
+    if (g.pendingDiscard) {
+      g.applyDiscard('player', g.side.player.hand.slice(0, g.pendingDiscard.count).map(c => c.uid));
+      continue;
+    }
+    if (g.pendingDeckPick) { g.applyDeckPick('player', g.side.player.pile[0].uid); continue; }
     if (g.pendingFirstPick) { g.applyFirstChoice(Math.random() < 0.5); continue; }
     if (g.current === 'ai') {
       const act = await ai.act();
