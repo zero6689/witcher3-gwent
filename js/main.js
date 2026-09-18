@@ -245,6 +245,9 @@ function showSoundPanel(returnTo) {
 function showAboutPanel(returnTo) {
   const ov = document.getElementById('overlay');
   ov.classList.remove('hidden');
+  /* 安卓安装包入口：指向 Release 的 latest 别名，发新版本不用改这里 */
+  const APK_URL = 'https://github.com/zero6689/witcher3-gwent/releases/latest/download/gwent-android-debug.apk';
+  const pageVer = (document.querySelector('meta[name="gwent-version"]') || {}).content || '';
   ov.innerHTML = `
     <div class="modal about-panel">
       <h2>关于 / 声明</h2>
@@ -255,6 +258,9 @@ function showAboutPanel(returnTo) {
         <p><b>版权归属</b>：卡面原画、阵营盾徽、角色形象与专有名词版权归 <b>CD Projekt RED</b> 及原作者所有，
         仅以学习、研究目的引用；背景音乐请使用你本人拥有的音频文件。</p>
         <p><b>技术说明</b>：代码由 AI 辅助编写（DeepSeek Harness），规则引擎、AI、音效均为纯前端实现。</p>
+        <p><b>安卓安装包（APK）</b>：与网页版同一份资源（当前网页 v${pageVer}）——
+        <a href="${APK_URL}" target="_blank" rel="noopener">下载最新版 APK</a>；
+        手机浏览器里点开即可下载安装（需在系统设置里允许「安装未知来源应用」）。</p>
         <p class="about-dim">若版权方认为不妥，请联系删除，本项目会立即下线相关内容。</p>
       </div>
       <div class="sp-actions"><button id="abClose" class="primary">关闭</button></div>

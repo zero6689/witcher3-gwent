@@ -1,4 +1,4 @@
-# ============================================================
+﻿# ============================================================
 # 一键编译 APK（本地，无需 Android Studio）
 # 前置：先跑 scripts\setup-android.ps1 装工具链
 # 用法（普通 PowerShell 窗口）：
@@ -69,17 +69,9 @@ if (Test-Path $wrap) {
 }
 
 # ---------- 4.5 版本号跟随根 package.json ----------
-$ver = (Get-Content (Join-Path $repo 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json).version
-$gradleFile = Join-Path $androidDir 'app\build.gradle'
-if ((Test-Path $gradleFile) -and $ver) {
-  $code = [int]((($ver -split '\.') | ForEach-Object { $_.PadLeft(2, '0') }) -join '')
-  if ($code -lt 1) { $code = 1 }
-  $g = Get-Content $gradleFile -Raw
-  $g = $g -replace 'versionCode \d+', "versionCode $code"
-  $g = $g -replace 'versionName ".*?"', "versionName `"$ver`""
-  Set-Content -Path $gradleFile -Value $g -Encoding ASCII
-  Say "Android 版本：versionCode=$code  versionName=$ver"
-}
+# 与云端 CI（.github/workflows/android.yml）共用这一个脚本，两边不再各写一套
+& $nodeExe (Join-Path $PSScriptRoot 'apply-android-version.js')
+if ($LASTEXITCODE -ne 0) { throw "写入 Android 版本号失败（exit $LASTEXITCODE）" }
 
 # ---------- 5. 图标与启动图 ----------
 $iconSrc = Join-Path $repo 'assets\icon-src\witcher3.png'

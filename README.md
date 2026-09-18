@@ -16,24 +16,34 @@
 
 ## 📦 打包成 APK
 
-仓库已内置 Capacitor 工程与 GitHub Actions 工作流，**不用在本机装 Android SDK**：
+**正式安装包由本机车道发布**（`scripts\build-apk.ps1`）——只有它能同时保证三件事：
 
-1. 打开仓库的 **Actions** 页 → 选 **Build Android APK** → **Run workflow**；
-2. 等 3-5 分钟构建完成，在该次运行页面底部下载 **Artifacts → gwent-android-apk**；
-3. 把 APK 传到手机，允许「安装未知来源应用」后安装。
-
-打 tag（如 `git tag v1.0.0 && git push --tags`）时会自动发布到 **Releases** 供直接下载。
-
-本机构建（需 JDK 17 + Android SDK + Gradle）。仓库提供两个脚本，**工具链全部装在项目 `.tools/` 内，不需要管理员权限、不污染系统**：
+1. **版本号正确**：`scripts/apply-android-version.js` 把根 `package.json` 的版本写进
+   `versionCode / versionName`（云端工作流与本地脚本**共用同一个脚本**，不会各写一套）；
+2. **能覆盖安装**：用本机固定的 debug 签名密钥，新包可以直接装在旧包上（不用卸载、不丢卡组与战绩）；
+3. **资源一致**：内嵌网页资源与线上版本逐字节一致（`node scripts/prepare-www.js` 生成，可逐个核对）。
 
 ```powershell
-# 1) 下载并安装工具链（JDK 17 + Android SDK 组件，约 700 MB）
+# 1) 下载并安装工具链（JDK 17 + Android SDK 组件，约 700 MB，全部装在项目 .tools/ 内）
 powershell -ExecutionPolicy Bypass -File scripts\setup-android.ps1
 
-# 2) 一键编译（自动 prepare-www → cap add android → 生成图标 → gradle assembleDebug）
+# 2) 一键编译（prepare-www → cap add android → 写版本号 → 生成图标 → gradle assembleDebug）
 powershell -ExecutionPolicy Bypass -File scripts\build-apk.ps1
 # 产物：项目根目录 gwent-android-debug.apk
 ```
+
+发布到 Releases 供直接下载（`<commit>` 用当前的 main）：
+
+```powershell
+gh release create v1.1.1 gwent-android-debug.apk --target <commit> --title "..." --notes-file <说明.md>
+```
+
+**云端 GitHub Actions 只出构建产物（Artifact），不发布 Release**：打开仓库 **Actions** 页 →
+**Build Android APK** → **Run workflow**，跑完在该次运行页面底部下载
+**Artifacts → gwent-android-apk**。它的定位是「从源码能不能构建」的自检：runner 的 debug 密钥
+**每次都是随机生成的**，那份包**无法覆盖安装**在正式包上（要装得先卸载）。
+想改成「云端也发同签名的包」，需把固定 debug 密钥放进仓库 Secret 并在这里还原到
+`$HOME/.android/debug.keystore` —— 做法已写在 `.github/workflows/android.yml` 的注释里。
 
 安装内容与来源（均为国内可达镜像，实测速度见括号）：
 

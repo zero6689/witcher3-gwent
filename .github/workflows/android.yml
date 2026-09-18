@@ -1,17 +1,21 @@
 name: Build Android APK
 
-# 在 GitHub 的服务器上编译 APK（本地无需装 Android SDK）
-# 触发方式：手动运行（Actions 页 → Build Android APK → Run workflow），或推送到 main 时自动构建
+# 在 GitHub 的服务器上编译 APK（做「从源码能不能构建」的自检；本地无需装 Android SDK）
+# 触发方式：手动运行（Actions 页 → Build Android APK → Run workflow），或推送到 main / 打 tag。
+#
+# ⚠️ 决策（2026-09-18）：云端**只出 Artifact，不发布 Release**。原因两条：
+#   1) runner 每次都是随机生成的 debug 签名密钥 ⇒ 云端包与手机上现有包**签名不同**，覆盖安装必失败；
+#   2) 正式安装包由本地车道 `scripts\build-apk.ps1` 发布，保证「版本号正确 + 与现有包同签名 + 资源逐字节核对」。
+# 想改成"云端也能发可直接覆盖安装的包"，需要把固定 debug 密钥放进仓库 Secret 并在这里还原到
+# `$HOME/.android/debug.keystore`，同时恢复发布步骤——没配之前别发，否则会覆盖成装不上的包。
 on:
   workflow_dispatch:
   push:
     branches: [main]
     tags: ['v*']
-  release:
-    types: [published]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -31,8 +35,17 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: 安装 Android SDK
-        uses: android-actions/setup-android@v3
+      # 不要用 android-actions/setup-android@v3：它内部执行 `sdkmanager tools`，
+      # 而 Google 已把旧的 `tools` 包从 SDK 仓库下架（实测报 "Failed to find package 'tools'"）
+      # ⇒ 该步骤必失败、整个构建挂掉。runner 镜像本来就带 Android SDK，直接用即可。
+      - name: 准备 Android SDK（用 runner 自带 SDK）
+        run: |
+          set -e
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          SDKMGR="$(ls -d "$ANDROID_SDK_ROOT"/cmdline-tools/*/bin/sdkmanager | head -n1)"
+          echo "sdkmanager: $SDKMGR"
+          yes | "$SDKMGR" --licenses > /dev/null 2>&1 || true
+          "$SDKMGR" --install "platform-tools" "platforms;android-34" "build-tools;34.0.0" || true
 
       - name: 准备网页资源到 android-app/www
         run: node scripts/prepare-www.js
@@ -44,6 +57,9 @@ jobs:
       - name: 添加 Android 平台
         working-directory: android-app
         run: npx cap add android
+
+      - name: 写入 Android 版本号（跟随根 package.json）
+        run: node scripts/apply-android-version.js
 
       - name: 生成应用图标与启动图
         working-directory: android-app
@@ -70,10 +86,3 @@ jobs:
           name: gwent-android-apk
           path: gwent-android-debug.apk
           retention-days: 30
-
-      - name: 发布到 Release（仅打 tag 时）
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: gwent-android-debug.apk
-          generate_release_notes: true

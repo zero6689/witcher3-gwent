@@ -1467,6 +1467,10 @@ img.art { width: 100%; height: 100%; object-fit: cover; display: block; border: 
   padding: 2px 8px 4px;
   user-select: none;
 }
+/* 底栏里的「安卓安装包」下载入口（user-select:none 不影响点击） */
+.legal a { color: rgba(214,181,116,.92); text-decoration: none; border-bottom: 1px dotted rgba(214,181,116,.5); cursor: pointer; }
+.legal a:hover { color: #f0d79a; border-bottom-color: #f0d79a; }
+.about-body a { color: #d6b574; }
 
 /* ============================================================
  *  主菜单 / 设置面板 / 卡池加减控件
